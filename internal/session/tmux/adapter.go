@@ -55,8 +55,15 @@ func (p *Provider) Start(ctx context.Context, name string, cfg session.Config) e
 		p.mu.Unlock()
 	}
 
-	// Copy overlay and CopyFiles before creating the tmux session.
+	// Copy overlays and CopyFiles before creating the tmux session.
 	// Local provider: files are on the same filesystem.
+	// Pack-level overlays (lower priority, merged additively).
+	if cfg.WorkDir != "" {
+		for _, od := range cfg.PackOverlayDirs {
+			_ = overlay.CopyDir(od, cfg.WorkDir, io.Discard)
+		}
+	}
+	// Agent-level overlay (highest priority, overwrites on conflict).
 	if cfg.OverlayDir != "" && cfg.WorkDir != "" {
 		_ = overlay.CopyDir(cfg.OverlayDir, cfg.WorkDir, io.Discard)
 	}

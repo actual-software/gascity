@@ -236,3 +236,99 @@ func TestNewAgentBuildParams(t *testing.T) {
 		t.Errorf("sessionTemplate = %q, want config value", bp.sessionTemplate)
 	}
 }
+
+func TestEffectiveOverlayDirs(t *testing.T) {
+	tests := []struct {
+		name    string
+		city    []string
+		rig     map[string][]string
+		rigName string
+		want    []string
+	}{
+		{
+			name: "city only",
+			city: []string{"/a/overlay", "/b/overlay"},
+			want: []string{"/a/overlay", "/b/overlay"},
+		},
+		{
+			name:    "rig only",
+			rig:     map[string][]string{"myrig": {"/r/overlay"}},
+			rigName: "myrig",
+			want:    []string{"/r/overlay"},
+		},
+		{
+			name:    "city plus rig",
+			city:    []string{"/a/overlay"},
+			rig:     map[string][]string{"myrig": {"/r/overlay"}},
+			rigName: "myrig",
+			want:    []string{"/a/overlay", "/r/overlay"},
+		},
+		{
+			name:    "rig not found",
+			city:    []string{"/a/overlay"},
+			rig:     map[string][]string{"other": {"/r/overlay"}},
+			rigName: "myrig",
+			want:    []string{"/a/overlay"},
+		},
+		{
+			name: "both empty",
+			want: nil,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := effectiveOverlayDirs(tc.city, tc.rig, tc.rigName)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("[%d] got %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestBuildOneAgentPackOverlayDirs(t *testing.T) {
+	sp := session.NewFake()
+	p := testBuildParams(sp)
+	p.packOverlayDirs = []string{"/pack1/overlay", "/pack2/overlay"}
+
+	cfgAgent := &config.Agent{
+		Name:         "worker",
+		StartCommand: "echo",
+	}
+
+	a, err := buildOneAgent(p, cfgAgent, "worker", nil)
+	if err != nil {
+		t.Fatalf("buildOneAgent: %v", err)
+	}
+
+	cfg := a.SessionConfig()
+	if len(cfg.PackOverlayDirs) != 2 {
+		t.Fatalf("PackOverlayDirs = %v, want 2 entries", cfg.PackOverlayDirs)
+	}
+	if cfg.PackOverlayDirs[0] != "/pack1/overlay" {
+		t.Errorf("PackOverlayDirs[0] = %q, want %q", cfg.PackOverlayDirs[0], "/pack1/overlay")
+	}
+}
+
+func TestNewAgentBuildParamsPackOverlayDirs(t *testing.T) {
+	sp := session.NewFake()
+	cfg := &config.City{
+		Workspace:       config.Workspace{Name: "test"},
+		PackOverlayDirs: []string{"/x/overlay"},
+		RigOverlayDirs:  map[string][]string{"r": {"/y/overlay"}},
+	}
+	var stderr bytes.Buffer
+
+	bp := newAgentBuildParams("test", "/tmp/city", cfg, sp, time.Time{}, &stderr)
+
+	if len(bp.packOverlayDirs) != 1 || bp.packOverlayDirs[0] != "/x/overlay" {
+		t.Errorf("packOverlayDirs = %v, want [/x/overlay]", bp.packOverlayDirs)
+	}
+	if len(bp.rigOverlayDirs["r"]) != 1 || bp.rigOverlayDirs["r"][0] != "/y/overlay" {
+		t.Errorf("rigOverlayDirs = %v, want map[r:[/y/overlay]]", bp.rigOverlayDirs)
+	}
+}

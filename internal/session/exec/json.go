@@ -34,6 +34,7 @@ type startConfig struct {
 	SessionSetup       []string          `json:"session_setup,omitempty"`
 	SessionSetupScript string            `json:"session_setup_script,omitempty"`
 	SessionLive        []string          `json:"session_live,omitempty"`
+	PackOverlayDirs    []string          `json:"pack_overlay_dirs,omitempty"`
 	OverlayDir         string            `json:"overlay_dir,omitempty"`
 	CopyFiles          []copyEntry       `json:"copy_files,omitempty"`
 }
@@ -56,6 +57,7 @@ func marshalStartConfig(cfg session.Config) ([]byte, error) {
 		SessionSetup:       cfg.SessionSetup,
 		SessionSetupScript: cfg.SessionSetupScript,
 		SessionLive:        cfg.SessionLive,
+		PackOverlayDirs:    cfg.PackOverlayDirs,
 		OverlayDir:         cfg.OverlayDir,
 		CopyFiles:          cfs,
 	}

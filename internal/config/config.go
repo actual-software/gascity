@@ -86,6 +86,15 @@ type City struct {
 	// Used when rig packs differ from city packs.
 	// Populated during pack expansion. Not from TOML.
 	RigPackDirs map[string][]string `toml:"-" json:"-"`
+	// PackOverlayDirs is the ordered list of overlay/ directories
+	// from all loaded city packs. Contents are copied to each agent's
+	// workdir during startup (before the agent's own OverlayDir).
+	// Populated during pack expansion. Not from TOML.
+	PackOverlayDirs []string `toml:"-" json:"-"`
+	// RigOverlayDirs maps rig name to its ordered overlay directories
+	// from rig packs. Merged with PackOverlayDirs during agent build.
+	// Populated during pack expansion. Not from TOML.
+	RigOverlayDirs map[string][]string `toml:"-" json:"-"`
 }
 
 // FormulaLayers holds resolved formula directories for symlink materialization.

@@ -72,6 +72,9 @@ type StartupHints struct {
 	// SessionLive is a list of idempotent commands run after session_setup
 	// and re-applied on config change without restart.
 	SessionLive []string
+	// PackOverlayDirs lists overlay directories from packs. Copied to
+	// the session workdir before the agent's own OverlayDir.
+	PackOverlayDirs []string
 	// OverlayDir is the resolved overlay directory path on the host.
 	// Passed through to the exec session provider for remote copy.
 	OverlayDir string
@@ -215,6 +218,7 @@ func (a *managed) SessionConfig() session.Config {
 		SessionSetup:           a.hints.SessionSetup,
 		SessionSetupScript:     a.hints.SessionSetupScript,
 		SessionLive:            a.hints.SessionLive,
+		PackOverlayDirs:        a.hints.PackOverlayDirs,
 		OverlayDir:             a.hints.OverlayDir,
 		CopyFiles:              a.hints.CopyFiles,
 		FingerprintExtra:       a.fpExtra,

@@ -121,6 +121,21 @@ func ExpandPacks(cfg *City, fs fsys.FS, cityRoot string, rigFormulaDirs map[stri
 			cfg.RigPackDirs[rig.Name] = rigTopoDirs
 		}
 
+		// Collect overlay/ dirs from rig pack dirs.
+		var rigOverlayDirs []string
+		for _, dir := range rigTopoDirs {
+			od := filepath.Join(dir, "overlay")
+			if info, sErr := fs.Stat(od); sErr == nil && info.IsDir() {
+				rigOverlayDirs = appendUnique(rigOverlayDirs, od)
+			}
+		}
+		if len(rigOverlayDirs) > 0 {
+			if cfg.RigOverlayDirs == nil {
+				cfg.RigOverlayDirs = make(map[string][]string)
+			}
+			cfg.RigOverlayDirs[rig.Name] = rigOverlayDirs
+		}
+
 		// Resolve fallback agents before collision detection.
 		rigAgents = resolveFallbackAgents(rigAgents)
 
@@ -217,6 +232,14 @@ func ExpandCityPacks(cfg *City, fs fsys.FS, cityRoot string) ([]string, []PackRe
 
 	// Store city pack dirs.
 	cfg.PackDirs = appendUnique(cfg.PackDirs, allPackDirs...)
+
+	// Collect overlay/ dirs from pack dirs.
+	for _, dir := range allPackDirs {
+		od := filepath.Join(dir, "overlay")
+		if info, err := fs.Stat(od); err == nil && info.IsDir() {
+			cfg.PackOverlayDirs = appendUnique(cfg.PackOverlayDirs, od)
+		}
+	}
 
 	// Resolve fallback agents before collision detection.
 	allAgents = resolveFallbackAgents(allAgents)

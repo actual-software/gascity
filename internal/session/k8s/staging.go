@@ -35,7 +35,14 @@ func stageFiles(ctx context.Context, ops k8sOps, podName string, cfg session.Con
 		}
 	}
 
-	// Copy overlay_dir.
+	// Copy pack-level overlays (lower priority, merged additively).
+	for _, od := range cfg.PackOverlayDirs {
+		if err := copyDirToPod(ctx, ops, podName, "stage", od, "/workspace"); err != nil {
+			fmt.Fprintf(warn, "gc: warning: staging pack overlay %s: %v\n", od, err) //nolint:errcheck
+		}
+	}
+
+	// Copy agent overlay_dir (highest priority, overwrites on conflict).
 	if cfg.OverlayDir != "" {
 		if err := copyDirToPod(ctx, ops, podName, "stage", cfg.OverlayDir, "/workspace"); err != nil {
 			fmt.Fprintf(warn, "gc: warning: staging overlay %s: %v\n", cfg.OverlayDir, err) //nolint:errcheck

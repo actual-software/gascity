@@ -30,6 +30,8 @@ type agentBuildParams struct {
 	sessionTemplate string
 	beaconTime      time.Time
 	packDirs        []string
+	packOverlayDirs []string
+	rigOverlayDirs  map[string][]string
 	globalFragments []string
 	stderr          io.Writer
 }
@@ -161,6 +163,7 @@ func buildOneAgent(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName st
 		SessionSetup:           expandedSetup,
 		SessionSetupScript:     resolvedScript,
 		SessionLive:            expandedLive,
+		PackOverlayDirs:        effectiveOverlayDirs(p.packOverlayDirs, p.rigOverlayDirs, rigName),
 		OverlayDir:             overlayDir,
 		CopyFiles:              copyFiles,
 	}
@@ -181,7 +184,25 @@ func newAgentBuildParams(cityName, cityPath string, cfg *config.City, sp session
 		sessionTemplate: cfg.Workspace.SessionTemplate,
 		beaconTime:      beaconTime,
 		packDirs:        cfg.PackDirs,
+		packOverlayDirs: cfg.PackOverlayDirs,
+		rigOverlayDirs:  cfg.RigOverlayDirs,
 		globalFragments: cfg.Workspace.GlobalFragments,
 		stderr:          stderr,
 	}
+}
+
+// effectiveOverlayDirs merges city-level and rig-level pack overlay dirs.
+// City dirs come first (lower priority), then rig-specific dirs.
+func effectiveOverlayDirs(cityDirs []string, rigDirs map[string][]string, rigName string) []string {
+	rigSpecific := rigDirs[rigName]
+	if len(rigSpecific) == 0 {
+		return cityDirs
+	}
+	if len(cityDirs) == 0 {
+		return rigSpecific
+	}
+	merged := make([]string, 0, len(cityDirs)+len(rigSpecific))
+	merged = append(merged, cityDirs...)
+	merged = append(merged, rigSpecific...)
+	return merged
 }

@@ -3485,3 +3485,210 @@ script = "doctor/b.sh"
 		t.Errorf("second PackName = %q, want %q", entries[1].PackName, "beta")
 	}
 }
+
+// --- PackOverlayDirs tests ---
+
+func TestExpandCityPacks_OverlayDirs(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "packs/skills/pack.toml", `
+[pack]
+name = "skills"
+schema = 1
+
+[[agents]]
+name = "worker"
+`)
+	// Create overlay/ directory in the pack.
+	if err := os.MkdirAll(filepath.Join(dir, "packs/skills/overlay/.claude/skills/plan"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "packs/skills/overlay/.claude/skills/plan/SKILL.md", "plan skill")
+
+	cfg := &City{
+		Workspace: Workspace{CityPacks: []string{"packs/skills"}},
+	}
+
+	if _, _, err := ExpandCityPacks(cfg, fsys.OSFS{}, dir); err != nil {
+		t.Fatalf("ExpandCityPacks: %v", err)
+	}
+
+	if len(cfg.PackOverlayDirs) != 1 {
+		t.Fatalf("got %d PackOverlayDirs, want 1", len(cfg.PackOverlayDirs))
+	}
+	want := filepath.Join(dir, "packs/skills/overlay")
+	if cfg.PackOverlayDirs[0] != want {
+		t.Errorf("PackOverlayDirs[0] = %q, want %q", cfg.PackOverlayDirs[0], want)
+	}
+}
+
+func TestExpandCityPacks_NoOverlayDir(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "packs/bare/pack.toml", `
+[pack]
+name = "bare"
+schema = 1
+
+[[agents]]
+name = "worker"
+`)
+	cfg := &City{
+		Workspace: Workspace{CityPacks: []string{"packs/bare"}},
+	}
+
+	if _, _, err := ExpandCityPacks(cfg, fsys.OSFS{}, dir); err != nil {
+		t.Fatalf("ExpandCityPacks: %v", err)
+	}
+
+	if len(cfg.PackOverlayDirs) != 0 {
+		t.Errorf("got %d PackOverlayDirs, want 0 (no overlay/ dir)", len(cfg.PackOverlayDirs))
+	}
+}
+
+func TestExpandCityPacks_MultiplePacksOverlayDirs(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "packs/alpha/pack.toml", `
+[pack]
+name = "alpha"
+schema = 1
+`)
+	if err := os.MkdirAll(filepath.Join(dir, "packs/alpha/overlay"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "packs/alpha/overlay/a.txt", "from alpha")
+
+	writeFile(t, dir, "packs/beta/pack.toml", `
+[pack]
+name = "beta"
+schema = 1
+`)
+	if err := os.MkdirAll(filepath.Join(dir, "packs/beta/overlay"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "packs/beta/overlay/b.txt", "from beta")
+
+	cfg := &City{
+		Workspace: Workspace{CityPacks: []string{"packs/alpha", "packs/beta"}},
+	}
+
+	if _, _, err := ExpandCityPacks(cfg, fsys.OSFS{}, dir); err != nil {
+		t.Fatalf("ExpandCityPacks: %v", err)
+	}
+
+	if len(cfg.PackOverlayDirs) != 2 {
+		t.Fatalf("got %d PackOverlayDirs, want 2", len(cfg.PackOverlayDirs))
+	}
+}
+
+func TestExpandPacks_RigOverlayDirs(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "packs/rig-skills/pack.toml", `
+[pack]
+name = "rig-skills"
+schema = 1
+
+[[agents]]
+name = "coder"
+`)
+	if err := os.MkdirAll(filepath.Join(dir, "packs/rig-skills/overlay"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "packs/rig-skills/overlay/skill.txt", "rig skill")
+
+	cfg := &City{
+		Rigs: []Rig{
+			{Name: "my-project", Path: "/tmp/project", Pack: "packs/rig-skills"},
+		},
+	}
+
+	if err := ExpandPacks(cfg, fsys.OSFS{}, dir, nil); err != nil {
+		t.Fatalf("ExpandPacks: %v", err)
+	}
+
+	if cfg.RigOverlayDirs == nil {
+		t.Fatal("RigOverlayDirs is nil")
+	}
+	dirs := cfg.RigOverlayDirs["my-project"]
+	if len(dirs) != 1 {
+		t.Fatalf("got %d rig overlay dirs, want 1", len(dirs))
+	}
+	want := filepath.Join(dir, "packs/rig-skills/overlay")
+	if dirs[0] != want {
+		t.Errorf("RigOverlayDirs[my-project][0] = %q, want %q", dirs[0], want)
+	}
+}
+
+func TestExpandPacks_RigNoOverlayDir(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "packs/bare/pack.toml", `
+[pack]
+name = "bare"
+schema = 1
+
+[[agents]]
+name = "worker"
+`)
+
+	cfg := &City{
+		Rigs: []Rig{
+			{Name: "hw", Path: "/tmp/hw", Pack: "packs/bare"},
+		},
+	}
+
+	if err := ExpandPacks(cfg, fsys.OSFS{}, dir, nil); err != nil {
+		t.Fatalf("ExpandPacks: %v", err)
+	}
+
+	if len(cfg.RigOverlayDirs) != 0 {
+		t.Errorf("got %d rig overlay dir entries, want 0", len(cfg.RigOverlayDirs))
+	}
+}
+
+func TestExpandCityPacks_IncludedPackOverlayDirs(t *testing.T) {
+	dir := t.TempDir()
+
+	// Child pack with overlay.
+	writeFile(t, dir, "packs/child/pack.toml", `
+[pack]
+name = "child"
+schema = 1
+`)
+	if err := os.MkdirAll(filepath.Join(dir, "packs/child/overlay"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "packs/child/overlay/child.txt", "from child")
+
+	// Parent pack includes child, also has overlay.
+	writeFile(t, dir, "packs/parent/pack.toml", `
+[pack]
+name = "parent"
+schema = 1
+includes = ["../child"]
+`)
+	if err := os.MkdirAll(filepath.Join(dir, "packs/parent/overlay"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "packs/parent/overlay/parent.txt", "from parent")
+
+	cfg := &City{
+		Workspace: Workspace{CityPacks: []string{"packs/parent"}},
+	}
+
+	if _, _, err := ExpandCityPacks(cfg, fsys.OSFS{}, dir); err != nil {
+		t.Fatalf("ExpandCityPacks: %v", err)
+	}
+
+	// Should have both child and parent overlay dirs.
+	if len(cfg.PackOverlayDirs) != 2 {
+		t.Fatalf("got %d PackOverlayDirs, want 2", len(cfg.PackOverlayDirs))
+	}
+
+	// Child comes first (included packs are lower priority).
+	wantChild := filepath.Join(dir, "packs/child/overlay")
+	wantParent := filepath.Join(dir, "packs/parent/overlay")
+	if cfg.PackOverlayDirs[0] != wantChild {
+		t.Errorf("PackOverlayDirs[0] = %q, want %q", cfg.PackOverlayDirs[0], wantChild)
+	}
+	if cfg.PackOverlayDirs[1] != wantParent {
+		t.Errorf("PackOverlayDirs[1] = %q, want %q", cfg.PackOverlayDirs[1], wantParent)
+	}
+}
