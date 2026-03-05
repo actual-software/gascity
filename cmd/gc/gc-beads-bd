@@ -355,17 +355,6 @@ get_connection_count() {
     echo "$output" | tail -1 | tr -d '[:space:]'
 }
 
-# has_connection_capacity checks if connections are below 80% of max (1000).
-# Returns 0 if capacity available, 1 if near limit or check failed (fail closed).
-has_connection_capacity() {
-    local max_conn=1000
-    local threshold=$((max_conn * 80 / 100))  # 800
-    local count
-    count=$(get_connection_count) || return 1  # fail closed
-    [ -z "$count" ] && return 1  # fail closed
-    [ "$count" -lt "$threshold" ] 2>/dev/null
-}
-
 # check_read_only tests if the dolt server is in read-only mode.
 # Returns 0 if read-only, 1 if writable.
 check_read_only() {
