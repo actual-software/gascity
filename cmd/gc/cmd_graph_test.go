@@ -33,9 +33,14 @@ func TestGraphTable(t *testing.T) {
 	if !strings.Contains(out, "gc-1") {
 		t.Errorf("missing gc-1 in output:\n%s", out)
 	}
-	// gc-2 should be blocked by gc-1.
-	if !strings.Contains(out, "gc-1") {
-		t.Errorf("gc-2 should show gc-1 as blocker:\n%s", out)
+	// gc-2 should be blocked by gc-1 — check the gc-2 line specifically.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "gc-2") {
+			if !strings.Contains(line, "gc-1") {
+				t.Errorf("gc-2 row should show gc-1 as blocker:\n%s", out)
+			}
+			break
+		}
 	}
 	// gc-3 should show "done".
 	if !strings.Contains(out, "done") {

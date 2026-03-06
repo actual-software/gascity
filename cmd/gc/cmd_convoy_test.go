@@ -751,66 +751,6 @@ func TestConvoyLandMissingID(t *testing.T) {
 	}
 }
 
-func TestConvoyLandWorktreeCleanup(t *testing.T) {
-	store := beads.NewMemStore()
-	_, _ = store.Create(beads.Bead{Title: "batch", Type: "convoy", Labels: []string{"owned"}}) // gc-1
-	_, _ = store.Create(beads.Bead{Title: "task A", ParentID: "gc-1", Assignee: "polecat-1"})  // gc-2
-	_, _ = store.Create(beads.Bead{Title: "task B", ParentID: "gc-1", Assignee: "polecat-2"})  // gc-3
-	_, _ = store.Create(beads.Bead{Title: "task C", ParentID: "gc-1", Assignee: "polecat-1"})  // gc-4 (same assignee)
-	_ = store.Close("gc-2")
-	_ = store.Close("gc-3")
-	_ = store.Close("gc-4")
-
-	var cleaned []string
-	opts := landOpts{
-		worktreeCleanup: func(assignee string) error {
-			cleaned = append(cleaned, assignee)
-			return nil
-		},
-	}
-
-	var stdout bytes.Buffer
-	code := doConvoyLand(store, events.Discard, []string{"gc-1"}, opts, &stdout, &bytes.Buffer{})
-	if code != 0 {
-		t.Fatalf("doConvoyLand = %d, want 0", code)
-	}
-
-	// Should have unique assignees only.
-	if len(cleaned) != 2 {
-		t.Errorf("cleaned %d assignees, want 2: %v", len(cleaned), cleaned)
-	}
-}
-
-func TestConvoyLandKeepWorktrees(t *testing.T) {
-	store := beads.NewMemStore()
-	_, _ = store.Create(beads.Bead{Title: "batch", Type: "convoy", Labels: []string{"owned"}}) // gc-1
-	_ = store.Close("gc-1")                                                                    // pre-close for idempotency check - actually let's keep it open
-
-	// Re-create for clean test.
-	store2 := beads.NewMemStore()
-	_, _ = store2.Create(beads.Bead{Title: "batch", Type: "convoy", Labels: []string{"owned"}}) // gc-1
-	_, _ = store2.Create(beads.Bead{Title: "task A", ParentID: "gc-1", Assignee: "polecat-1"})  // gc-2
-	_ = store2.Close("gc-2")
-
-	cleanupCalled := false
-	opts := landOpts{
-		KeepWorktrees: true,
-		worktreeCleanup: func(_ string) error {
-			cleanupCalled = true
-			return nil
-		},
-	}
-
-	var stdout bytes.Buffer
-	code := doConvoyLand(store2, events.Discard, []string{"gc-1"}, opts, &stdout, &bytes.Buffer{})
-	if code != 0 {
-		t.Fatalf("doConvoyLand = %d, want 0", code)
-	}
-	if cleanupCalled {
-		t.Error("worktree cleanup should not be called with --keep-worktrees")
-	}
-}
-
 func TestConvoyLandNotConvoy(t *testing.T) {
 	store := beads.NewMemStore()
 	_, _ = store.Create(beads.Bead{Title: "just a task"}) // gc-1
@@ -916,21 +856,6 @@ func TestConvoyCreateWithFields(t *testing.T) {
 	}
 	if got.Merge != "mr" {
 		t.Errorf("Merge = %q, want %q", got.Merge, "mr")
-	}
-}
-
-// --- collectAssignees ---
-
-func TestCollectAssignees(t *testing.T) {
-	beadList := []beads.Bead{
-		{Assignee: "polecat-1"},
-		{Assignee: "polecat-2"},
-		{Assignee: "polecat-1"}, // duplicate
-		{Assignee: ""},          // empty
-	}
-	got := collectAssignees(beadList)
-	if len(got) != 2 {
-		t.Errorf("collectAssignees = %v, want 2 unique assignees", got)
 	}
 }
 

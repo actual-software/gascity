@@ -565,26 +565,23 @@ func doConvoyStranded(store beads.Store, stdout, stderr io.Writer) int {
 // --- gc convoy land ---
 
 func newConvoyLandCmd(stdout, stderr io.Writer) *cobra.Command {
-	var force, dryRun, keepWorktrees bool
+	var force, dryRun bool
 	cmd := &cobra.Command{
 		Use:   "land <convoy-id>",
 		Short: "Land an owned convoy (terminate + cleanup)",
-		Long: `Land an owned convoy, verifying all children are closed and cleaning up.
+		Long: `Land an owned convoy, verifying all children are closed.
 
 Landing is the natural lifecycle termination for owned convoys created
 via "gc sling --owned". It verifies all children are closed (or uses
---force), optionally removes git worktrees, closes the convoy bead,
-and records a ConvoyClosed event.`,
+--force), closes the convoy bead, and records a ConvoyClosed event.`,
 		Example: `  gc convoy land gc-42
   gc convoy land gc-42 --force
-  gc convoy land gc-42 --dry-run
-  gc convoy land gc-42 --keep-worktrees`,
+  gc convoy land gc-42 --dry-run`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(_ *cobra.Command, args []string) error {
 			opts := landOpts{
-				Force:         force,
-				DryRun:        dryRun,
-				KeepWorktrees: keepWorktrees,
+				Force:  force,
+				DryRun: dryRun,
 			}
 			if cmdConvoyLand(args, opts, stdout, stderr) != 0 {
 				return errExit
@@ -594,18 +591,13 @@ and records a ConvoyClosed event.`,
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "land even with open children")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview what would happen")
-	cmd.Flags().BoolVar(&keepWorktrees, "keep-worktrees", false, "skip worktree cleanup")
 	return cmd
 }
 
 // landOpts controls the behavior of the land command.
 type landOpts struct {
-	Force         bool
-	DryRun        bool
-	KeepWorktrees bool
-	// worktreeCleanup is called for each child's assignee during landing.
-	// Nil means no worktree cleanup is attempted.
-	worktreeCleanup func(assignee string) error
+	Force  bool
+	DryRun bool
 }
 
 // cmdConvoyLand is the CLI entry point for landing a convoy.
@@ -674,23 +666,7 @@ func doConvoyLand(store beads.Store, rec events.Recorder, args []string, opts la
 	if opts.DryRun {
 		fmt.Fprintf(stdout, "Would land convoy %s %q\n", convoyID, convoy.Title)                 //nolint:errcheck // best-effort stdout
 		fmt.Fprintf(stdout, "  Children: %d total, %d open\n", len(children), len(openChildren)) //nolint:errcheck // best-effort stdout
-		if !opts.KeepWorktrees {
-			assignees := collectAssignees(children)
-			if len(assignees) > 0 {
-				fmt.Fprintf(stdout, "  Worktrees to clean: %v\n", assignees) //nolint:errcheck // best-effort stdout
-			}
-		}
 		return 0
-	}
-
-	// Worktree cleanup (unless --keep-worktrees).
-	if !opts.KeepWorktrees && opts.worktreeCleanup != nil {
-		for _, assignee := range collectAssignees(children) {
-			if err := opts.worktreeCleanup(assignee); err != nil {
-				fmt.Fprintf(stderr, "gc convoy land: warning: cleaning worktree for %s: %v\n", assignee, err) //nolint:errcheck // best-effort stderr
-				// warnings don't abort landing
-			}
-		}
 	}
 
 	// Close the convoy.
@@ -713,19 +689,6 @@ func doConvoyLand(store beads.Store, rec events.Recorder, args []string, opts la
 		fmt.Fprintf(stdout, "Landed convoy %s %q\n", convoyID, convoy.Title) //nolint:errcheck // best-effort stdout
 	}
 	return 0
-}
-
-// collectAssignees returns unique assignees from a list of beads.
-func collectAssignees(beadList []beads.Bead) []string {
-	seen := make(map[string]bool)
-	var assignees []string
-	for _, b := range beadList {
-		if b.Assignee != "" && !seen[b.Assignee] {
-			seen[b.Assignee] = true
-			assignees = append(assignees, b.Assignee)
-		}
-	}
-	return assignees
 }
 
 // --- gc convoy autoclose (hidden — called by bd on_close hook) ---

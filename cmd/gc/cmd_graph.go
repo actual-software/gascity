@@ -20,7 +20,7 @@ func newGraphCmd(stdout, stderr io.Writer) *cobra.Command {
 
 Resolves dependencies via the bead store and prints each bead with its
 status and what blocks it. Convoys and epics are expanded to their
-open children automatically.
+children automatically. Readiness is computed within the displayed set.
 
 By default prints a table. Use --mermaid for a Mermaid.js flowchart
 you can paste into Markdown.`,
