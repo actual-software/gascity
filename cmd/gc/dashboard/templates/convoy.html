@@ -334,7 +334,7 @@
                         <tbody>
                             {{range .Workers}}
                             <tr class="{{polecatStatusClass .WorkStatus}}">
-                                <td><a href="#" class="agent-log-link" data-agent-name="{{.Name}}">{{.Name}}</a></td>
+                                <td><a href="#" class="agent-log-link" data-agent-name="{{if .Rig}}{{.Rig}}/{{end}}{{.Name}}">{{.Name}}</a></td>
                                 <td>{{if eq .AgentType "refinery"}}<span class="badge badge-blue">refinery</span>{{else}}<span class="badge badge-muted">polecat</span>{{end}}</td>
                                 <td><span class="polecat-rig">{{.Rig}}</span></td>
                                 <td class="polecat-issue">

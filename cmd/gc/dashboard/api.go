@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"strings"
 	"sync"
@@ -1634,20 +1635,23 @@ func (h *APIHandler) handleAgentLogs(w http.ResponseWriter, r *http.Request) {
 	upstream := "/v0/agent/" + agentName + "/logs"
 	sep := "?"
 	if v := r.URL.Query().Get("tail"); v != "" {
-		upstream += sep + "tail=" + v
+		upstream += sep + "tail=" + url.QueryEscape(v)
 		sep = "&"
 	}
 	if v := r.URL.Query().Get("before"); v != "" {
-		upstream += sep + "before=" + v
+		upstream += sep + "before=" + url.QueryEscape(v)
 	}
 
-	body, err := h.apiGet(upstream)
+	resp, err := h.apiClient.Get(h.apiURL + upstream)
 	if err != nil {
-		h.sendError(w, "Failed to fetch agent logs: "+err.Error(), http.StatusInternalServerError)
+		h.sendError(w, "Failed to fetch agent logs", http.StatusBadGateway)
 		return
 	}
+	defer resp.Body.Close() //nolint:errcheck
+	body, _ := io.ReadAll(resp.Body)
 
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
 }
 

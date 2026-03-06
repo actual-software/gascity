@@ -3260,6 +3260,11 @@
         }
     });
 
+    // Generation counter to guard against stale async responses after agent switch.
+    var logDrawerGeneration = 0;
+    // Flag: when true, polling is suppressed because user loaded older messages.
+    var logDrawerHasOlder = false;
+
     function openLogDrawer(agentName) {
         var drawer = document.getElementById('agent-log-drawer');
         var nameEl = document.getElementById('log-drawer-agent-name');
@@ -3279,6 +3284,9 @@
 
         logDrawerAgent = agentName;
         logDrawerOldestUUID = null;
+        logDrawerHasOlder = false;
+        logDrawerGeneration++;
+        var gen = logDrawerGeneration;
         window.pauseRefresh = true;
 
         nameEl.textContent = agentName;
@@ -3295,6 +3303,7 @@
 
         // Fetch initial logs.
         fetchAgentLogs(agentName, 1, '', function(data) {
+            if (gen !== logDrawerGeneration) return; // stale response
             loadingEl.style.display = 'none';
             if (data.error) {
                 messagesEl.innerHTML = '<div class="empty-state"><p>' + escapeHtml(data.error) + '</p></div>';
@@ -3315,9 +3324,10 @@
         // Poll for new messages every 5 seconds.
         if (logDrawerInterval) clearInterval(logDrawerInterval);
         logDrawerInterval = setInterval(function() {
-            if (logDrawerAgent !== agentName) return;
+            if (gen !== logDrawerGeneration) return; // stale interval
+            if (logDrawerHasOlder) return; // suppress polling while older messages are loaded
             fetchAgentLogs(agentName, 1, '', function(data) {
-                if (logDrawerAgent !== agentName) return;
+                if (gen !== logDrawerGeneration) return; // stale response
                 if (data.error) return;
                 // Re-render with latest data.
                 var msgs = data.messages || [];
@@ -3363,10 +3373,13 @@
         if (e.target.closest('#log-drawer-older-btn')) {
             e.preventDefault();
             if (!logDrawerAgent || !logDrawerOldestUUID) return;
+            var gen = logDrawerGeneration;
             var btn = document.getElementById('log-drawer-older-btn');
             btn.textContent = 'Loading...';
             btn.disabled = true;
+            logDrawerHasOlder = true; // suppress polling while older messages are loaded
             fetchAgentLogs(logDrawerAgent, 1, logDrawerOldestUUID, function(data) {
+                if (gen !== logDrawerGeneration) return; // stale response
                 btn.textContent = 'Load older';
                 btn.disabled = false;
                 if (data.error) return;

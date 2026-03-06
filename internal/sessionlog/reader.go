@@ -130,7 +130,8 @@ func parseFile(path string) ([]*Entry, error) {
 	scanner := bufio.NewScanner(f)
 	// Default scanner buffer is 64KB; Claude entries can be large
 	// (tool results with full file contents, base64 images, etc.).
-	scanner.Buffer(make([]byte, 0, 256*1024), 10*1024*1024)
+	// Use 50MB max to handle very large entries without aborting the whole file.
+	scanner.Buffer(make([]byte, 0, 256*1024), 50*1024*1024)
 
 	for scanner.Scan() {
 		line := scanner.Bytes()

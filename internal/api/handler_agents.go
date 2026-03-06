@@ -377,11 +377,11 @@ func findAgent(cfg *config.City, name string) (config.Agent, bool) {
 		if a.IsPool() && a.Dir == dir {
 			pool := a.EffectivePool()
 			if pool.IsUnlimited() {
-				// Unlimited pool: match "{name}-{digits}".
+				// Unlimited pool: match "{name}-{N}" where N >= 1.
 				prefix := a.Name + "-"
 				if strings.HasPrefix(baseName, prefix) {
 					suffix := baseName[len(prefix):]
-					if _, err := strconv.Atoi(suffix); err == nil {
+					if n, err := strconv.Atoi(suffix); err == nil && n >= 1 {
 						return a, true
 					}
 				}
