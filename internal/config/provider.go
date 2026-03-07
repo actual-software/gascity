@@ -42,6 +42,18 @@ type ProviderSpec struct {
 	// InstructionsFile is the filename the provider reads for project instructions
 	// (e.g., "CLAUDE.md", "AGENTS.md"). Empty defaults to "AGENTS.md".
 	InstructionsFile string `toml:"instructions_file,omitempty"`
+	// ResumeFlag is the CLI flag for resuming a session by ID.
+	// Empty means the provider does not support resume.
+	// Examples: "--resume" (claude), "resume" (codex)
+	ResumeFlag string `toml:"resume_flag,omitempty"`
+	// ResumeStyle controls how ResumeFlag is applied:
+	//   "flag"       → command --resume <key>              (default)
+	//   "subcommand" → command resume <key>
+	ResumeStyle string `toml:"resume_style,omitempty"`
+	// SessionIDFlag is the CLI flag for creating a session with a specific ID.
+	// Enables the Generate & Pass strategy for session key management.
+	// Example: "--session-id" (claude)
+	SessionIDFlag string `toml:"session_id_flag,omitempty"`
 }
 
 // ResolvedProvider is the fully-merged, ready-to-use provider config.
@@ -60,6 +72,9 @@ type ResolvedProvider struct {
 	SupportsACP            bool
 	SupportsHooks          bool
 	InstructionsFile       string
+	ResumeFlag             string
+	ResumeStyle            string
+	SessionIDFlag          string
 }
 
 // CommandString returns the full command line: command followed by args.
@@ -113,6 +128,9 @@ func BuiltinProviders() map[string]ProviderSpec {
 			SupportsACP:            true,
 			SupportsHooks:          true,
 			InstructionsFile:       "CLAUDE.md",
+			ResumeFlag:             "--resume",
+			ResumeStyle:            "flag",
+			SessionIDFlag:          "--session-id",
 		},
 		"codex": {
 			DisplayName:      "Codex CLI",

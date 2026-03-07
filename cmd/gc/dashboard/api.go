@@ -1513,15 +1513,16 @@ func (h *APIHandler) hasQuestionInOutput(agentName string) bool {
 		return false
 	}
 
-	// Find the last assistant turn.
-	var lastAssistantText string
+	// Find the last assistant turn, or fall back to "output" (peek format).
+	var lastText string
 	for i := len(outputResp.Turns) - 1; i >= 0; i-- {
-		if outputResp.Turns[i].Role == "assistant" {
-			lastAssistantText = strings.ToLower(outputResp.Turns[i].Text)
+		role := outputResp.Turns[i].Role
+		if role == "assistant" || role == "output" {
+			lastText = strings.ToLower(outputResp.Turns[i].Text)
 			break
 		}
 	}
-	if lastAssistantText == "" {
+	if lastText == "" {
 		return false
 	}
 
@@ -1535,7 +1536,7 @@ func (h *APIHandler) hasQuestionInOutput(agentName string) bool {
 		"your thoughts",
 		"let me know",
 	} {
-		if strings.Contains(lastAssistantText, indicator) {
+		if strings.Contains(lastText, indicator) {
 			return true
 		}
 	}

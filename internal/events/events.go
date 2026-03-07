@@ -1,9 +1,12 @@
 // Package events provides tier-0 observability for Gas City.
 //
-// Events are simple, synchronous, append-only records of what happened.
-// The recorder writes JSON lines to .gc/events.jsonl; the reader scans
-// them back. Recording is best-effort: errors are logged to stderr but
-// never returned to callers.
+// Events are infrastructure records of what happened (agent lifecycle,
+// bead operations, controller state). The recorder writes JSON lines to
+// .gc/events.jsonl; the reader scans them back. Recording is best-effort:
+// errors are logged to stderr but never returned to callers.
+//
+// Agent observation data (messages, tool calls, thinking) is read directly
+// from provider session logs via the sessionlog package, not the event bus.
 package events
 
 import (
@@ -43,16 +46,6 @@ const (
 	AutomationCompleted = "automation.completed"
 	AutomationFailed    = "automation.failed"
 	ProviderSwapped     = "provider.swapped"
-
-	// Agent observation events (bridged from agent.Event).
-	AgentMessage    = "agent.message"
-	AgentToolCall   = "agent.tool_call"
-	AgentToolResult = "agent.tool_result"
-	AgentThinking   = "agent.thinking"
-	AgentError      = "agent.error"
-	AgentIdle       = "agent.idle"
-	AgentCompleted  = "agent.completed"
-	AgentOutput     = "agent.output"
 )
 
 // Event is a single recorded occurrence in the system.

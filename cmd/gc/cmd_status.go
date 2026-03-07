@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/gastownhall/gascity/internal/config"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/spf13/cobra"
 )
 
@@ -66,7 +66,7 @@ func cmdAgentStatus(args []string, stdout, stderr io.Writer) int {
 
 // doAgentStatus prints detailed status for a single agent.
 func doAgentStatus(
-	sp session.Provider,
+	sp runtime.Provider,
 	dops drainOps,
 	cfgAgent config.Agent,
 	agentName, sn string,
@@ -169,7 +169,7 @@ func cmdRigStatus(args []string, stdout, stderr io.Writer) int {
 
 // doRigStatus prints rig info and per-agent running state.
 func doRigStatus(
-	sp session.Provider,
+	sp runtime.Provider,
 	dops drainOps,
 	rig config.Rig,
 	agents []config.Agent,
@@ -206,7 +206,7 @@ func doRigStatus(
 }
 
 // agentStatusLine returns a human-readable status string for an agent session.
-func agentStatusLine(sp session.Provider, dops drainOps, sn string, suspended bool) string {
+func agentStatusLine(sp runtime.Provider, dops drainOps, sn string, suspended bool) string {
 	running := sp.IsRunning(sn)
 	draining, _ := dops.isDraining(sn)
 

@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/gastownhall/gascity/internal/session"
-	sessionexec "github.com/gastownhall/gascity/internal/session/exec"
-	"github.com/gastownhall/gascity/internal/session/sessiontest"
+	"github.com/gastownhall/gascity/internal/runtime"
+	sessionexec "github.com/gastownhall/gascity/internal/runtime/exec"
+	"github.com/gastownhall/gascity/internal/runtime/runtimetest"
 )
 
 // TestK8sSessionConformance runs the session conformance suite against a
@@ -35,11 +35,11 @@ func TestK8sSessionConformance(t *testing.T) {
 	var counter int64
 
 	// Lifecycle tests: each creates its own pod (unavoidable).
-	sessiontest.RunLifecycleTests(t, func(t *testing.T) (session.Provider, session.Config, string) {
+	runtimetest.RunLifecycleTests(t, func(t *testing.T) (runtime.Provider, runtime.Config, string) {
 		id := atomic.AddInt64(&counter, 1)
 		name := fmt.Sprintf("gc-k8s-conform-%d", id)
 		t.Cleanup(func() { _ = p.Stop(name) })
-		return p, session.Config{
+		return p, runtime.Config{
 			Command: "sleep 300",
 			WorkDir: "/tmp",
 		}, name
@@ -48,11 +48,11 @@ func TestK8sSessionConformance(t *testing.T) {
 	// Shared-session tests: one pod for all metadata/observation/signaling.
 	t.Run("SharedSession", func(t *testing.T) {
 		name := "gc-k8s-shared"
-		cfg := session.Config{Command: "sleep 300", WorkDir: "/tmp"}
+		cfg := runtime.Config{Command: "sleep 300", WorkDir: "/tmp"}
 		if err := p.Start(context.Background(), name, cfg); err != nil {
 			t.Fatalf("Start shared session: %v", err)
 		}
 		t.Cleanup(func() { _ = p.Stop(name) })
-		sessiontest.RunSessionTests(t, p, cfg, name)
+		runtimetest.RunSessionTests(t, p, cfg, name)
 	})
 }

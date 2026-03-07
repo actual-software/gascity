@@ -41,8 +41,13 @@ linters:
           - revive
           - unused
           - unparam
+      # runtime shadows stdlib but is isolated to internal/.
+      - path: internal/runtime/
+        linters:
+          - revive
+        text: "var-naming"
       # exec is an established package name — renaming would break imports.
-      - path: internal/session/exec/
+      - path: internal/runtime/exec/
         linters:
           - revive
         text: "var-naming"

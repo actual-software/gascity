@@ -15,14 +15,14 @@ import (
 	"github.com/gastownhall/gascity/internal/mail"
 	"github.com/gastownhall/gascity/internal/mail/beadmail"
 	mailexec "github.com/gastownhall/gascity/internal/mail/exec"
-	"github.com/gastownhall/gascity/internal/session"
-	sessionacp "github.com/gastownhall/gascity/internal/session/acp"
-	sessionauto "github.com/gastownhall/gascity/internal/session/auto"
-	sessionexec "github.com/gastownhall/gascity/internal/session/exec"
-	sessionhybrid "github.com/gastownhall/gascity/internal/session/hybrid"
-	sessionk8s "github.com/gastownhall/gascity/internal/session/k8s"
-	sessionsubprocess "github.com/gastownhall/gascity/internal/session/subprocess"
-	sessiontmux "github.com/gastownhall/gascity/internal/session/tmux"
+	"github.com/gastownhall/gascity/internal/runtime"
+	sessionacp "github.com/gastownhall/gascity/internal/runtime/acp"
+	sessionauto "github.com/gastownhall/gascity/internal/runtime/auto"
+	sessionexec "github.com/gastownhall/gascity/internal/runtime/exec"
+	sessionhybrid "github.com/gastownhall/gascity/internal/runtime/hybrid"
+	sessionk8s "github.com/gastownhall/gascity/internal/runtime/k8s"
+	sessionsubprocess "github.com/gastownhall/gascity/internal/runtime/subprocess"
+	sessiontmux "github.com/gastownhall/gascity/internal/runtime/tmux"
 )
 
 // sessionProviderName returns the session provider name.
@@ -59,7 +59,7 @@ func tmuxConfigFromSession(sc config.SessionConfig, cityName string) sessiontmux
 	}
 }
 
-// newSessionProviderByName constructs a session.Provider from a provider name.
+// newSessionProviderByName constructs a runtime.Provider from a provider name.
 // cityName is used to auto-default the tmux socket when none is configured.
 // Returns error instead of os.Exit, making it safe for the hot-reload path.
 //
@@ -70,15 +70,15 @@ func tmuxConfigFromSession(sc config.SessionConfig, cityName string) sessiontmux
 //   - "exec:<script>" → user-supplied script (absolute path or PATH lookup)
 //   - "k8s" → native Kubernetes provider (client-go)
 //   - default → real tmux provider
-func newSessionProviderByName(name string, sc config.SessionConfig, cityName string) (session.Provider, error) {
+func newSessionProviderByName(name string, sc config.SessionConfig, cityName string) (runtime.Provider, error) {
 	if strings.HasPrefix(name, "exec:") {
 		return sessionexec.NewProvider(strings.TrimPrefix(name, "exec:")), nil
 	}
 	switch name {
 	case "fake":
-		return session.NewFake(), nil
+		return runtime.NewFake(), nil
 	case "fail":
-		return session.NewFailFake(), nil
+		return runtime.NewFailFake(), nil
 	case "subprocess":
 		return sessionsubprocess.NewProvider(), nil
 	case "acp":
@@ -96,11 +96,11 @@ func newSessionProviderByName(name string, sc config.SessionConfig, cityName str
 	}
 }
 
-// newSessionProvider returns a session.Provider based on the session provider
+// newSessionProvider returns a runtime.Provider based on the session provider
 // name (env var → city.toml → default). When the city-level provider is not
 // "acp" but some agents have session = "acp", returns an auto.Provider that
 // routes per-session. Startup path — exits on error.
-func newSessionProvider() session.Provider {
+func newSessionProvider() runtime.Provider {
 	var sc config.SessionConfig
 	var cityName string
 	var agents []config.Agent
@@ -317,7 +317,7 @@ func openCityEventsProvider(stderr io.Writer, cmdName string) (events.Provider, 
 // tmux (local) or k8s (remote) based on session name. The GC_HYBRID_REMOTE_MATCH
 // env var controls which sessions go to k8s. If unset, all sessions route to
 // local tmux.
-func newHybridProvider(sc config.SessionConfig, cityName string) (session.Provider, error) {
+func newHybridProvider(sc config.SessionConfig, cityName string) (runtime.Provider, error) {
 	local := sessiontmux.NewProviderWithConfig(tmuxConfigFromSession(sc, cityName))
 	remote, err := sessionk8s.NewProvider()
 	if err != nil {

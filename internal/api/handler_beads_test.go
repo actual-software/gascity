@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/beads"
+	"github.com/gastownhall/gascity/internal/config"
 )
 
 func TestBeadCRUD(t *testing.T) {
@@ -185,6 +186,124 @@ func TestBeadUpdate(t *testing.T) {
 	}
 }
 
+func TestBeadPatchAlias(t *testing.T) {
+	state := newFakeState(t)
+	store := state.stores["myrig"]
+	b, _ := store.Create(beads.Bead{Title: "Test"})
+	srv := New(state)
+
+	desc := "patched"
+	body := `{"description":"` + desc + `"}`
+	req := httptest.NewRequest("PATCH", "/v0/bead/"+b.ID, bytes.NewBufferString(body))
+	req.Header.Set("X-GC-Request", "true")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	got, _ := store.Get(b.ID)
+	if got.Description != desc {
+		t.Errorf("Description = %q, want %q", got.Description, desc)
+	}
+}
+
+func TestBeadReopen(t *testing.T) {
+	state := newFakeState(t)
+	store := state.stores["myrig"]
+	b, _ := store.Create(beads.Bead{Title: "Closed task"})
+	store.Close(b.ID) //nolint:errcheck
+	srv := New(state)
+
+	// Reopen the closed bead.
+	req := newPostRequest("/v0/bead/"+b.ID+"/reopen", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reopen status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	// Verify reopened.
+	got, _ := store.Get(b.ID)
+	if got.Status != "open" {
+		t.Errorf("Status = %q, want %q", got.Status, "open")
+	}
+}
+
+func TestBeadReopenNotClosed(t *testing.T) {
+	state := newFakeState(t)
+	store := state.stores["myrig"]
+	b, _ := store.Create(beads.Bead{Title: "Open task"})
+	srv := New(state)
+
+	req := newPostRequest("/v0/bead/"+b.ID+"/reopen", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+}
+
+func TestBeadAssign(t *testing.T) {
+	state := newFakeState(t)
+	store := state.stores["myrig"]
+	b, _ := store.Create(beads.Bead{Title: "Task"})
+	srv := New(state)
+
+	body := `{"assignee":"worker-1"}`
+	req := newPostRequest("/v0/bead/"+b.ID+"/assign", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("assign status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	got, _ := store.Get(b.ID)
+	if got.Assignee != "worker-1" {
+		t.Errorf("Assignee = %q, want %q", got.Assignee, "worker-1")
+	}
+}
+
+func TestBeadDelete(t *testing.T) {
+	state := newFakeState(t)
+	store := state.stores["myrig"]
+	b, _ := store.Create(beads.Bead{Title: "To delete"})
+	srv := New(state)
+
+	req := httptest.NewRequest("DELETE", "/v0/bead/"+b.ID, nil)
+	req.Header.Set("X-GC-Request", "true")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	// Verify closed (soft delete).
+	got, _ := store.Get(b.ID)
+	if got.Status != "closed" {
+		t.Errorf("Status = %q, want %q", got.Status, "closed")
+	}
+}
+
+func TestBeadDeleteNotFound(t *testing.T) {
+	state := newFakeState(t)
+	srv := New(state)
+
+	req := httptest.NewRequest("DELETE", "/v0/bead/nonexistent", nil)
+	req.Header.Set("X-GC-Request", "true")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
 func TestBeadCreateValidation(t *testing.T) {
 	state := newFakeState(t)
 	srv := New(state)
@@ -196,5 +315,60 @@ func TestBeadCreateValidation(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestPackList(t *testing.T) {
+	state := newFakeState(t)
+	state.cfg.Packs = map[string]config.PackSource{
+		"gastown": {
+			Source: "https://github.com/example/gastown-pack",
+			Ref:    "v1.0.0",
+			Path:   "packs/gastown",
+		},
+	}
+	srv := New(state)
+
+	req := httptest.NewRequest("GET", "/v0/packs", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var resp struct {
+		Packs []packResponse `json:"packs"`
+	}
+	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck
+	if len(resp.Packs) != 1 {
+		t.Fatalf("packs count = %d, want 1", len(resp.Packs))
+	}
+	if resp.Packs[0].Name != "gastown" {
+		t.Errorf("Name = %q, want %q", resp.Packs[0].Name, "gastown")
+	}
+	if resp.Packs[0].Source != "https://github.com/example/gastown-pack" {
+		t.Errorf("Source = %q", resp.Packs[0].Source)
+	}
+}
+
+func TestPackListEmpty(t *testing.T) {
+	state := newFakeState(t)
+	srv := New(state)
+
+	req := httptest.NewRequest("GET", "/v0/packs", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var resp struct {
+		Packs []packResponse `json:"packs"`
+	}
+	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck
+	if len(resp.Packs) != 0 {
+		t.Errorf("packs count = %d, want 0", len(resp.Packs))
 	}
 }

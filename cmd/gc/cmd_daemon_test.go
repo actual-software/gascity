@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +13,7 @@ import (
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 func TestSanitizeServiceName(t *testing.T) {
@@ -297,7 +297,7 @@ func TestSystemdServicePath(t *testing.T) {
 }
 
 func TestDoDaemonInstallUnsupportedOS(t *testing.T) {
-	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+	if goruntime.GOOS == "darwin" || goruntime.GOOS == "linux" {
 		t.Skip("test only meaningful on unsupported OS")
 	}
 	dir := t.TempDir()
@@ -369,8 +369,8 @@ func TestControllerSocketPing(t *testing.T) {
 	// Write city.toml.
 	writeCityTOML(t, dir, "test", "worker")
 
-	sp := session.NewFake()
-	buildFn := func(_ *config.City, _ session.Provider) []agent.Agent {
+	sp := runtime.NewFake()
+	buildFn := func(_ *config.City, _ runtime.Provider) []agent.Agent {
 		return []agent.Agent{agent.New("worker", "test", "echo hi", "", nil, agent.StartupHints{}, "", "", nil, sp)}
 	}
 

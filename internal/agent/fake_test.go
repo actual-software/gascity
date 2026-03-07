@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 var _ Agent = (*Fake)(nil)
@@ -147,7 +147,7 @@ func TestFakeSessionName(t *testing.T) {
 
 func TestFakeSessionConfig(t *testing.T) {
 	f := NewFake("mayor", "mayor")
-	cfg := session.Config{Command: "claude --skip", Env: map[string]string{"A": "1"}}
+	cfg := runtime.Config{Command: "claude --skip", Env: map[string]string{"A": "1"}}
 	f.FakeSessionConfig = cfg
 
 	got := f.SessionConfig()

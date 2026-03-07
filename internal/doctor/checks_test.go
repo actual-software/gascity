@@ -11,7 +11,7 @@ import (
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/fsys"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 // helper creates .gc/ and city.toml in a temp dir.
@@ -363,8 +363,8 @@ func TestBinaryCheck_VersionNotFoundStillError(t *testing.T) {
 // --- AgentSessionsCheck ---
 
 func TestAgentSessionsCheck_AllRunning(t *testing.T) {
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "mayor", session.Config{}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "mayor", runtime.Config{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -379,7 +379,7 @@ func TestAgentSessionsCheck_AllRunning(t *testing.T) {
 }
 
 func TestAgentSessionsCheck_Missing(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// Don't start any sessions.
 
 	cfg := &config.City{
@@ -393,7 +393,7 @@ func TestAgentSessionsCheck_Missing(t *testing.T) {
 }
 
 func TestAgentSessionsCheck_SkipsSuspended(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// Suspended agent has no session — that's fine.
 
 	cfg := &config.City{
@@ -409,8 +409,8 @@ func TestAgentSessionsCheck_SkipsSuspended(t *testing.T) {
 // --- ZombieSessionsCheck ---
 
 func TestZombieSessionsCheck_NoZombies(t *testing.T) {
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "mayor", session.Config{}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "mayor", runtime.Config{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -425,8 +425,8 @@ func TestZombieSessionsCheck_NoZombies(t *testing.T) {
 }
 
 func TestZombieSessionsCheck_Found(t *testing.T) {
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "mayor", session.Config{}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "mayor", runtime.Config{}); err != nil {
 		t.Fatal(err)
 	}
 	sp.Zombies["mayor"] = true
@@ -442,8 +442,8 @@ func TestZombieSessionsCheck_Found(t *testing.T) {
 }
 
 func TestZombieSessionsCheck_Fix(t *testing.T) {
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "mayor", session.Config{}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "mayor", runtime.Config{}); err != nil {
 		t.Fatal(err)
 	}
 	sp.Zombies["mayor"] = true
@@ -462,8 +462,8 @@ func TestZombieSessionsCheck_Fix(t *testing.T) {
 }
 
 func TestZombieSessionsCheck_SkipsNoProcessNames(t *testing.T) {
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "mayor", session.Config{}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "mayor", runtime.Config{}); err != nil {
 		t.Fatal(err)
 	}
 	sp.Zombies["mayor"] = true // zombie but no process_names to check
@@ -481,8 +481,8 @@ func TestZombieSessionsCheck_SkipsNoProcessNames(t *testing.T) {
 // --- OrphanSessionsCheck ---
 
 func TestOrphanSessionsCheck_NoOrphans(t *testing.T) {
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "mayor", session.Config{}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "mayor", runtime.Config{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -497,11 +497,11 @@ func TestOrphanSessionsCheck_NoOrphans(t *testing.T) {
 }
 
 func TestOrphanSessionsCheck_Found(t *testing.T) {
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "mayor", session.Config{}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "mayor", runtime.Config{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sp.Start(context.Background(), "stale-worker", session.Config{}); err != nil {
+	if err := sp.Start(context.Background(), "stale-worker", runtime.Config{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -516,11 +516,11 @@ func TestOrphanSessionsCheck_Found(t *testing.T) {
 }
 
 func TestOrphanSessionsCheck_Fix(t *testing.T) {
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "mayor", session.Config{}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "mayor", runtime.Config{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sp.Start(context.Background(), "stale-worker", session.Config{}); err != nil {
+	if err := sp.Start(context.Background(), "stale-worker", runtime.Config{}); err != nil {
 		t.Fatal(err)
 	}
 

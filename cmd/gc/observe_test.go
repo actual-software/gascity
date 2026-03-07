@@ -5,9 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/gastownhall/gascity/internal/agent"
-	"github.com/gastownhall/gascity/internal/events"
 )
 
 func TestClaudeProjectSlug(t *testing.T) {
@@ -65,77 +62,6 @@ func TestFindJSONLSessionFileNoMatch(t *testing.T) {
 	}
 }
 
-func TestAgentEventToSystemType(t *testing.T) {
-	tests := []struct {
-		in   agent.EventType
-		want string
-	}{
-		{agent.EventAssistantMessage, events.AgentMessage},
-		{agent.EventToolCall, events.AgentToolCall},
-		{agent.EventToolResult, events.AgentToolResult},
-		{agent.EventThinking, events.AgentThinking},
-		{agent.EventError, events.AgentError},
-		{agent.EventIdle, events.AgentIdle},
-		{agent.EventCompleted, events.AgentCompleted},
-		{agent.EventOutput, events.AgentOutput},
-		{agent.EventType(999), ""},
-	}
-	for _, tt := range tests {
-		got := agentEventToSystemType(tt.in)
-		if got != tt.want {
-			t.Errorf("agentEventToSystemType(%d) = %q, want %q", tt.in, got, tt.want)
-		}
-	}
-}
-
-func TestBridgeAgentEvents(t *testing.T) {
-	ch := make(chan agent.Event, 3)
-	rec := &spyRecorder{}
-
-	ch <- agent.Event{Type: agent.EventToolCall, Data: "Bash"}
-	ch <- agent.Event{Type: agent.EventAssistantMessage, Data: "done"}
-	ch <- agent.Event{Type: agent.EventType(999)} // unknown — should be skipped
-	close(ch)
-
-	bridgeAgentEvents("worker", ch, rec)
-
-	if len(rec.events) != 2 {
-		t.Fatalf("got %d events, want 2", len(rec.events))
-	}
-	if rec.events[0].Type != events.AgentToolCall {
-		t.Errorf("events[0].Type = %q, want %q", rec.events[0].Type, events.AgentToolCall)
-	}
-	if rec.events[0].Actor != "worker" {
-		t.Errorf("events[0].Actor = %q, want %q", rec.events[0].Actor, "worker")
-	}
-	if rec.events[0].Message != "Bash" {
-		t.Errorf("events[0].Message = %q, want %q", rec.events[0].Message, "Bash")
-	}
-	if rec.events[1].Type != events.AgentMessage {
-		t.Errorf("events[1].Type = %q, want %q", rec.events[1].Type, events.AgentMessage)
-	}
-}
-
-func TestBridgeExitsOnChannelClose(t *testing.T) {
-	ch := make(chan agent.Event)
-	rec := &spyRecorder{}
-
-	done := make(chan struct{})
-	go func() {
-		bridgeAgentEvents("worker", ch, rec)
-		close(done)
-	}()
-
-	close(ch)
-
-	select {
-	case <-done:
-		// OK — goroutine exited.
-	case <-time.After(2 * time.Second):
-		t.Fatal("bridgeAgentEvents did not exit after channel close")
-	}
-}
-
 func TestObserveSearchPathsDedup(t *testing.T) {
 	paths := observeSearchPaths([]string{
 		"/extra/path",
@@ -163,13 +89,4 @@ func TestObserveSearchPathsDedup(t *testing.T) {
 	if !found {
 		t.Errorf("expected /extra/path in results: %v", paths)
 	}
-}
-
-// spyRecorder captures events for testing.
-type spyRecorder struct {
-	events []events.Event
-}
-
-func (s *spyRecorder) Record(e events.Event) {
-	s.events = append(s.events, e)
 }

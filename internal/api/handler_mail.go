@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 
+	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/mail"
 )
 
@@ -21,6 +22,8 @@ func (s *Server) handleMailList(w http.ResponseWriter, r *http.Request) {
 
 	switch status {
 	case "", "unread":
+		pp := parsePagination(r, 50)
+
 		// Aggregate across all rigs when rig is omitted (matching count semantics).
 		if rig != "" {
 			mp := s.state.MailProvider(rig)
@@ -36,7 +39,18 @@ func (s *Server) handleMailList(w http.ResponseWriter, r *http.Request) {
 			if msgs == nil {
 				msgs = []mail.Message{}
 			}
-			writeListJSON(w, s.latestIndex(), msgs, len(msgs))
+			if !pp.IsPaging {
+				if pp.Limit < len(msgs) {
+					msgs = msgs[:pp.Limit]
+				}
+				writeListJSON(w, s.latestIndex(), msgs, len(msgs))
+				return
+			}
+			page, total, nextCursor := paginate(msgs, pp)
+			if page == nil {
+				page = []mail.Message{}
+			}
+			writePagedJSON(w, s.latestIndex(), page, total, nextCursor)
 			return
 		}
 
@@ -53,7 +67,18 @@ func (s *Server) handleMailList(w http.ResponseWriter, r *http.Request) {
 		if allMsgs == nil {
 			allMsgs = []mail.Message{}
 		}
-		writeListJSON(w, s.latestIndex(), allMsgs, len(allMsgs))
+		if !pp.IsPaging {
+			if pp.Limit < len(allMsgs) {
+				allMsgs = allMsgs[:pp.Limit]
+			}
+			writeListJSON(w, s.latestIndex(), allMsgs, len(allMsgs))
+			break
+		}
+		page, total, nextCursor := paginate(allMsgs, pp)
+		if page == nil {
+			page = []mail.Message{}
+		}
+		writePagedJSON(w, s.latestIndex(), page, total, nextCursor)
 	default:
 		writeError(w, http.StatusBadRequest, "invalid", "unsupported status filter: "+status+"; supported: unread")
 	}
@@ -118,11 +143,23 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Idempotency check — key is scoped by method+path to prevent cross-endpoint collisions.
+	idemKey := scopedIdemKey(r, r.Header.Get("Idempotency-Key"))
+	var bodyHash string
+	if idemKey != "" {
+		bodyHash = hashBody(body)
+		if s.idem.handleIdempotent(w, idemKey, bodyHash) {
+			return
+		}
+	}
+
 	msg, err := mp.Send(body.From, body.To, body.Subject, body.Body)
 	if err != nil {
+		s.idem.unreserve(idemKey)
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	s.idem.storeResponse(idemKey, bodyHash, http.StatusCreated, msg)
 	writeJSON(w, http.StatusCreated, msg)
 }
 
@@ -208,6 +245,28 @@ func (s *Server) handleMailReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, msg)
+}
+
+func (s *Server) handleMailDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	mp, err := s.findMailProviderByID(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	if mp == nil {
+		writeError(w, http.StatusNotFound, "not_found", "message "+id+" not found")
+		return
+	}
+	if err := mp.Delete(id); err != nil {
+		if errors.Is(err, mail.ErrNotFound) || errors.Is(err, beads.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "message "+id+" not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func (s *Server) handleMailThread(w http.ResponseWriter, r *http.Request) {
@@ -309,7 +368,7 @@ func (s *Server) findMailProviderByID(id string) (mail.Provider, error) {
 		mp := providers[name]
 		if _, err := mp.Get(id); err == nil {
 			return mp, nil
-		} else if !errors.Is(err, mail.ErrNotFound) {
+		} else if !errors.Is(err, mail.ErrNotFound) && !errors.Is(err, beads.ErrNotFound) {
 			if firstErr == nil {
 				firstErr = err
 			}

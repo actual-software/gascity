@@ -40,6 +40,7 @@ gc [flags]
 | [gc restart](#gc-restart) | Restart all agent sessions in the city |
 | [gc resume](#gc-resume) | Resume a suspended city |
 | [gc rig](#gc-rig) | Manage rigs (projects) |
+| [gc session](#gc-session) | Manage interactive chat sessions |
 | [gc skill](#gc-skill) | Show command reference for a topic |
 | [gc sling](#gc-sling) | Route work to an agent or pool |
 | [gc start](#gc-start) | Start the city (auto-initializes if needed) |
@@ -1428,6 +1429,134 @@ database remains accessible. Use "gc rig resume" to restore.
 
 ```
 gc rig suspend <name>
+```
+
+## gc session
+
+Create, resume, suspend, and close persistent conversations with agents.
+
+Sessions are conversations backed by agent templates. They can be
+suspended to free resources and resumed later with full conversation
+continuity.
+
+```
+gc session
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| [gc session attach](#gc-session-attach) | Attach to (or resume) a chat session |
+| [gc session close](#gc-session-close) | Close a session permanently |
+| [gc session list](#gc-session-list) | List chat sessions |
+| [gc session new](#gc-session-new) | Create a new chat session from an agent template |
+| [gc session peek](#gc-session-peek) | View session output without attaching |
+| [gc session prune](#gc-session-prune) | Close old suspended sessions |
+| [gc session rename](#gc-session-rename) | Rename a session |
+| [gc session suspend](#gc-session-suspend) | Suspend a session (save state, free resources) |
+
+## gc session attach
+
+Attach to a running session or resume a suspended one.
+
+If the session is active with a live tmux session, reattaches.
+If the session is suspended or the tmux session died, resumes
+using the provider's resume mechanism (if supported) or restarts.
+
+```
+gc session attach <session-id>
+```
+
+## gc session close
+
+End a conversation. Stops the runtime if active and closes the bead.
+
+```
+gc session close <session-id>
+```
+
+## gc session list
+
+List all chat sessions. By default shows active and suspended sessions.
+
+```
+gc session list [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | bool |  | JSON output |
+| `--state` | string |  | filter by state: "active", "suspended", "closed", "all" |
+| `--template` | string |  | filter by template name |
+
+## gc session new
+
+Create a new persistent conversation from an agent template defined in
+city.toml. By default, attaches the terminal after creation.
+
+```
+gc session new <template> [flags]
+```
+
+**Example:**
+
+```
+gc session new helper
+  gc session new helper --title "debugging auth"
+  gc session new helper --no-attach
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--no-attach` | bool |  | create session without attaching |
+| `--title` | string |  | human-readable session title |
+
+## gc session peek
+
+View session output without attaching
+
+```
+gc session peek <session-id> [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--lines` | int | `50` | number of lines to capture |
+
+## gc session prune
+
+Close suspended sessions older than a given age. Only suspended
+sessions are affected — active sessions are never pruned.
+
+```
+gc session prune [flags]
+```
+
+**Example:**
+
+```
+gc session prune --before 7d
+  gc session prune --before 24h
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--before` | string | `7d` | prune sessions older than this duration (e.g., 7d, 24h) |
+
+## gc session rename
+
+Rename a session
+
+```
+gc session rename <session-id> <title>
+```
+
+## gc session suspend
+
+Suspend an active session by stopping its runtime process.
+The session bead persists and can be resumed later.
+
+```
+gc session suspend <session-id>
 ```
 
 ## gc skill

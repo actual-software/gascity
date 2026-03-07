@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 var _ Handle = (*Fake)(nil) // Fake satisfies Handle (already satisfies Agent)
@@ -33,7 +33,7 @@ type Fake struct {
 
 	// FakeSessionConfig is returned by SessionConfig(). Set it per-test
 	// to control the config fingerprint for reconciliation tests.
-	FakeSessionConfig session.Config
+	FakeSessionConfig runtime.Config
 
 	// FakePeekOutput is returned by Peek(). Set it per-test.
 	FakePeekOutput string
@@ -180,7 +180,7 @@ func (f *Fake) Peek(lines int) (string, error) {
 }
 
 // SessionConfig records the call and returns FakeSessionConfig.
-func (f *Fake) SessionConfig() session.Config {
+func (f *Fake) SessionConfig() runtime.Config {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.Calls = append(f.Calls, Call{Method: "SessionConfig", Name: f.FakeName})
@@ -231,7 +231,7 @@ func (f *Fake) SendKeys(keys ...string) error {
 }
 
 // RunLive records the call and returns nil.
-func (f *Fake) RunLive(_ session.Config) error {
+func (f *Fake) RunLive(_ runtime.Config) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.Calls = append(f.Calls, Call{Method: "RunLive", Name: f.FakeName})

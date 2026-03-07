@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/events"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 // ---------------------------------------------------------------------------
@@ -15,8 +15,8 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestDoAgentKill(t *testing.T) {
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "worker", session.Config{Command: "echo"}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "worker", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -44,7 +44,7 @@ func TestDoAgentKill(t *testing.T) {
 }
 
 func TestDoAgentKillNotRunning(t *testing.T) {
-	sp := session.NewFake() // no sessions started
+	sp := runtime.NewFake() // no sessions started
 
 	var stdout, stderr bytes.Buffer
 	code := doAgentKill(sp, events.Discard, "worker", "worker", &stdout, &stderr)
@@ -57,11 +57,11 @@ func TestDoAgentKillNotRunning(t *testing.T) {
 }
 
 func TestDoAgentKillStopError(t *testing.T) {
-	sp := session.NewFailFake()
+	sp := runtime.NewFailFake()
 	// FailFake returns false for IsRunning, so we need a custom approach.
 	// Use a regular fake and inject a stop error via a wrapper.
-	sp2 := session.NewFake()
-	if err := sp2.Start(context.Background(), "worker", session.Config{Command: "echo"}); err != nil {
+	sp2 := runtime.NewFake()
+	if err := sp2.Start(context.Background(), "worker", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = sp // unused
@@ -79,9 +79,9 @@ func TestDoAgentKillStopError(t *testing.T) {
 	}
 }
 
-// stopErrorProvider wraps session.Fake but returns an error on Stop.
+// stopErrorProvider wraps runtime.Fake but returns an error on Stop.
 type stopErrorProvider struct {
-	*session.Fake
+	*runtime.Fake
 	stopErr error
 }
 

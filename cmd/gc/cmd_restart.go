@@ -8,7 +8,7 @@ import (
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/spf13/cobra"
 )
 
@@ -112,7 +112,7 @@ func cmdRigRestart(args []string, stdout, stderr io.Writer) int {
 // doRigRestart kills sessions for all agents in a rig. The reconciler will
 // restart them. Returns 0 even if no agents were running.
 func doRigRestart(
-	sp session.Provider,
+	sp runtime.Provider,
 	rec events.Recorder,
 	agents []config.Agent,
 	rigName, cityName, sessionTemplate string,

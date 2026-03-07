@@ -14,7 +14,7 @@ import (
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/gastownhall/gascity/internal/telemetry"
 )
 
@@ -29,8 +29,8 @@ type CityRuntime struct {
 	watchDirs []string
 
 	cfg     *config.City
-	sp      session.Provider
-	buildFn func(*config.City, session.Provider) []agent.Agent
+	sp      runtime.Provider
+	buildFn func(*config.City, runtime.Provider) []agent.Agent
 
 	rops reconcileOps
 	dops drainOps
@@ -45,6 +45,8 @@ type CityRuntime struct {
 	poolSessions      map[string]time.Duration
 	poolDeathHandlers map[string]poolDeathInfo
 	suspendedNames    map[string]bool
+
+	standaloneCityStore beads.Store // non-nil when API disabled; for chat auto-suspend
 
 	shutdownOnce   sync.Once
 	logPrefix      string // "gc start" or "gc supervisor"
@@ -61,8 +63,8 @@ type CityRuntimeParams struct {
 	WatchDirs []string
 
 	Cfg     *config.City
-	SP      session.Provider
-	BuildFn func(*config.City, session.Provider) []agent.Agent
+	SP      runtime.Provider
+	BuildFn func(*config.City, runtime.Provider) []agent.Agent
 	Dops    drainOps
 
 	Rec events.Recorder
@@ -166,13 +168,23 @@ func (cr *CityRuntime) run(ctx context.Context) {
 		cr.poolSessions, cr.suspendedNames,
 		cr.cfg.Daemon.DriftDrainTimeoutDuration(), cr.cfg.Session.StartupTimeoutDuration(),
 		cr.stdout, cr.stderr, ctx)
-	ensureObservers(agents, observePaths, cr.rec)
+	ensureObservers(agents, observePaths)
 	fmt.Fprintln(cr.stdout, "City started.") //nolint:errcheck // best-effort stdout
 
 	cityRoot := filepath.Dir(cr.tomlPath)
 	interval := cr.cfg.Daemon.PatrolIntervalDuration()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	// Open standalone city bead store for auto-suspend when API is disabled.
+	// When API is enabled, controllerState manages the store.
+	if cr.cs == nil {
+		if store, err := openCityStoreAt(cityRoot); err != nil {
+			fmt.Fprintf(cr.stderr, "%s: city bead store: %v (auto-suspend disabled)\n", cr.logPrefix, err) //nolint:errcheck // best-effort stderr
+		} else {
+			cr.standaloneCityStore = store
+		}
+	}
 
 	// Track pool instance liveness for death detection.
 	var prevPoolRunning map[string]bool
@@ -231,7 +243,7 @@ func (cr *CityRuntime) tick(
 		cr.poolSessions, cr.suspendedNames,
 		cr.cfg.Daemon.DriftDrainTimeoutDuration(), cr.cfg.Session.StartupTimeoutDuration(),
 		cr.stdout, cr.stderr, ctx)
-	ensureObservers(agents, *observePaths, cr.rec)
+	ensureObservers(agents, *observePaths)
 
 	// Wisp GC: purge expired closed molecules.
 	if cr.wg != nil && cr.wg.shouldRun(time.Now()) {
@@ -246,6 +258,17 @@ func (cr *CityRuntime) tick(
 	// Automation dispatch.
 	if cr.ad != nil {
 		cr.ad.dispatch(ctx, cityRoot, time.Now())
+	}
+
+	// Chat session auto-suspend: suspend detached idle sessions.
+	if idleTimeout := cr.cfg.ChatSessions.IdleTimeoutDuration(); idleTimeout > 0 {
+		var store beads.Store
+		if cr.cs != nil {
+			store = cr.cs.CityBeadStore()
+		} else {
+			store = cr.standaloneCityStore
+		}
+		autoSuspendChatSessions(store, cr.sp, idleTimeout, cr.stdout, cr.stderr)
 	}
 }
 
@@ -363,6 +386,13 @@ func (cr *CityRuntime) reloadConfig(
 
 	if cr.cs != nil {
 		cr.cs.update(cr.cfg, cr.sp)
+	} else if cr.standaloneCityStore != nil {
+		// Refresh standalone city store for auto-suspend.
+		if s, err := openCityStoreAt(cityRoot); err != nil {
+			fmt.Fprintf(cr.stderr, "%s: city bead store reload: %v\n", cr.logPrefix, err) //nolint:errcheck
+		} else {
+			cr.standaloneCityStore = s
+		}
 	}
 
 	fmt.Fprintf(cr.stdout, "Config reloaded: %s (rev %s)\n", //nolint:errcheck

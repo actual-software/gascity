@@ -8,7 +8,6 @@ import (
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/agent/observe/jsonl"
 	"github.com/gastownhall/gascity/internal/agent/observe/peek"
-	"github.com/gastownhall/gascity/internal/events"
 )
 
 // claudeProjectSlug converts an absolute path to the Claude project
@@ -51,49 +50,6 @@ func findJSONLSessionFile(searchPaths []string, workDir string) string {
 		}
 	}
 	return ""
-}
-
-// agentEventToSystemType maps an agent.EventType to a system event bus
-// type string. Returns "" for unknown types.
-func agentEventToSystemType(t agent.EventType) string {
-	switch t {
-	case agent.EventAssistantMessage:
-		return events.AgentMessage
-	case agent.EventToolCall:
-		return events.AgentToolCall
-	case agent.EventToolResult:
-		return events.AgentToolResult
-	case agent.EventThinking:
-		return events.AgentThinking
-	case agent.EventError:
-		return events.AgentError
-	case agent.EventIdle:
-		return events.AgentIdle
-	case agent.EventCompleted:
-		return events.AgentCompleted
-	case agent.EventOutput:
-		return events.AgentOutput
-	default:
-		return ""
-	}
-}
-
-// bridgeAgentEvents drains agent observation events and records them
-// to the system event bus. Exits when ch is closed.
-func bridgeAgentEvents(agentName string, ch <-chan agent.Event, rec events.Recorder) {
-	for ev := range ch {
-		sysType := agentEventToSystemType(ev.Type)
-		if sysType == "" {
-			continue
-		}
-		msg, _ := ev.Data.(string)
-		rec.Record(events.Event{
-			Type:    sysType,
-			Actor:   agentName,
-			Subject: agentName,
-			Message: msg,
-		})
-	}
 }
 
 // defaultObservePaths returns the default search paths for Claude JSONL
@@ -152,14 +108,11 @@ func attachObserver(a agent.Agent, searchPaths []string) <-chan agent.Event {
 // ensureObservers is an idempotent scan that attaches observers to
 // running agents that don't have one yet. Safe to call on every
 // controller tick.
-func ensureObservers(agents []agent.Agent, searchPaths []string, rec events.Recorder) {
+func ensureObservers(agents []agent.Agent, searchPaths []string) {
 	for _, a := range agents {
 		if !a.IsRunning() || a.Events() != nil {
 			continue // not running or already observed
 		}
-		ch := attachObserver(a, searchPaths)
-		if ch != nil {
-			go bridgeAgentEvents(a.Name(), ch, rec)
-		}
+		attachObserver(a, searchPaths)
 	}
 }

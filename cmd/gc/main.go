@@ -120,6 +120,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newUnregisterCmd(stdout, stderr),
 		newCitiesCmd(stdout, stderr),
 		newSupervisorCmd(stdout, stderr),
+		newSessionCmd(stdout, stderr),
 	)
 	// gen-doc needs the root command to walk the tree; add after construction.
 	root.AddCommand(newGenDocCmd(stdout, stderr, root))
@@ -220,28 +221,33 @@ func openCityStore(stderr io.Writer, cmdName string) (beads.Store, int) {
 		fmt.Fprintf(stderr, "%s: %v\n", cmdName, err) //nolint:errcheck // best-effort stderr
 		return nil, 1
 	}
+	store, err := openCityStoreAt(cityPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", cmdName, err) //nolint:errcheck // best-effort stderr
+		return nil, 1
+	}
+	return store, 0
+}
 
-	// Use rawBeadsProvider for Store selection: "bd" creates a BdStore
-	// (bd CLI for CRUD), while beadsProvider() remaps "bd" → exec: for
-	// lifecycle only.
+// openCityStoreAt opens a bead store at the given city path.
+// Used by the controller (which already knows the city path) and by
+// openCityStore (which resolves the path first).
+func openCityStoreAt(cityPath string) (beads.Store, error) {
 	provider := rawBeadsProvider(cityPath)
 	if strings.HasPrefix(provider, "exec:") {
-		s := beadsexec.NewStore(strings.TrimPrefix(provider, "exec:"))
-		return s, 0
+		return beadsexec.NewStore(strings.TrimPrefix(provider, "exec:")), nil
 	}
 	switch provider {
 	case "file":
 		store, err := beads.OpenFileStore(fsys.OSFS{}, filepath.Join(cityPath, ".gc", "beads.json"))
 		if err != nil {
-			fmt.Fprintf(stderr, "%s: %v\n", cmdName, err) //nolint:errcheck // best-effort stderr
-			return nil, 1
+			return nil, err
 		}
-		return store, 0
+		return store, nil
 	default: // "bd" or unrecognized → use bd
 		if _, err := exec.LookPath("bd"); err != nil {
-			fmt.Fprintf(stderr, "%s: bd not found in PATH (install beads or set GC_BEADS=file)\n", cmdName) //nolint:errcheck // best-effort stderr
-			return nil, 1
+			return nil, fmt.Errorf("bd not found in PATH (install beads or set GC_BEADS=file)")
 		}
-		return beads.NewBdStore(cityPath, beads.ExecCommandRunner()), 0
+		return beads.NewBdStore(cityPath, beads.ExecCommandRunner()), nil
 	}
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/api"
+	"github.com/gastownhall/gascity/internal/automations"
 	"github.com/gastownhall/gascity/internal/beads"
 	beadsexec "github.com/gastownhall/gascity/internal/beads/exec"
 	"github.com/gastownhall/gascity/internal/config"
@@ -18,31 +19,32 @@ import (
 	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/mail"
 	"github.com/gastownhall/gascity/internal/mail/beadmail"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 // controllerState implements api.State and api.StateMutator.
 // Protected by an RWMutex for hot-reload: readers take RLock,
 // the controller loop takes Lock when updating cfg/sp/stores.
 type controllerState struct {
-	mu         sync.RWMutex
-	cfg        *config.City
-	sp         session.Provider
-	beadStores map[string]beads.Store
-	mailProvs  map[string]mail.Provider
-	eventProv  events.Provider
-	editor     *configedit.Editor
-	cityName   string
-	cityPath   string
-	version    string
-	startedAt  time.Time
-	ct         crashTracker // nil if crash tracking disabled
+	mu            sync.RWMutex
+	cfg           *config.City
+	sp            runtime.Provider
+	beadStores    map[string]beads.Store
+	cityBeadStore beads.Store // city-level store for session beads
+	mailProvs     map[string]mail.Provider
+	eventProv     events.Provider
+	editor        *configedit.Editor
+	cityName      string
+	cityPath      string
+	version       string
+	startedAt     time.Time
+	ct            crashTracker // nil if crash tracking disabled
 }
 
 // newControllerState creates a controllerState with per-rig stores.
 func newControllerState(
 	cfg *config.City,
-	sp session.Provider,
+	sp runtime.Provider,
 	ep events.Provider,
 	cityName, cityPath string,
 ) *controllerState {
@@ -58,6 +60,12 @@ func newControllerState(
 		startedAt: time.Now(),
 	}
 	cs.beadStores, cs.mailProvs = cs.buildStores(cfg)
+	// Open city-level store for session beads (best-effort).
+	if store, err := openCityStoreAt(cityPath); err != nil {
+		fmt.Fprintf(os.Stderr, "api: city bead store: %v (session endpoints disabled)\n", err)
+	} else {
+		cs.cityBeadStore = store
+	}
 	return cs
 }
 
@@ -129,9 +137,14 @@ func (cs *controllerState) openRigStore(provider, rigPath string) beads.Store {
 
 // update replaces the config, session provider, and reopens stores.
 // Stores are built outside the lock to avoid blocking readers during I/O.
-func (cs *controllerState) update(cfg *config.City, sp session.Provider) {
+func (cs *controllerState) update(cfg *config.City, sp runtime.Provider) {
 	// Build new stores outside the lock (may do file I/O / subprocess spawns).
 	stores, provs := cs.buildStores(cfg)
+	// Reopen city-level store for session beads.
+	cityStore, err := openCityStoreAt(cs.cityPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "api: city bead store reload: %v\n", err) //nolint:errcheck // best-effort stderr
+	}
 
 	// Swap under short critical section.
 	cs.mu.Lock()
@@ -139,6 +152,10 @@ func (cs *controllerState) update(cfg *config.City, sp session.Provider) {
 	cs.sp = sp
 	cs.beadStores = stores
 	cs.mailProvs = provs
+	if cityStore != nil {
+		cs.cityBeadStore = cityStore
+	}
+	// Keep prior non-nil store if reopen fails.
 	cs.mu.Unlock()
 }
 
@@ -152,7 +169,7 @@ func (cs *controllerState) Config() *config.City {
 }
 
 // SessionProvider returns the current session provider.
-func (cs *controllerState) SessionProvider() session.Provider {
+func (cs *controllerState) SessionProvider() runtime.Provider {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 	return cs.sp
@@ -235,7 +252,12 @@ func (cs *controllerState) IsQuarantined(sessionName string) bool {
 
 // RawConfig returns the raw (pre-expansion) config for provenance detection.
 // Implements api.RawConfigProvider.
+//
+// Holds cs.mu.RLock during the load to ensure the raw config is from the
+// same generation as the expanded cs.cfg snapshot.
 func (cs *controllerState) RawConfig() *config.City {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
 	tomlPath := filepath.Join(cs.cityPath, "city.toml")
 	raw, err := config.Load(fsys.OSFS{}, tomlPath)
 	if err != nil {
@@ -244,11 +266,77 @@ func (cs *controllerState) RawConfig() *config.City {
 	return raw
 }
 
+// CityBeadStore returns the city-level bead store for session beads.
+func (cs *controllerState) CityBeadStore() beads.Store {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.cityBeadStore
+}
+
+// Automations scans formula layers and returns all automations.
+func (cs *controllerState) Automations() []automations.Automation {
+	cs.mu.RLock()
+	cfg := cs.cfg
+	cs.mu.RUnlock()
+
+	cityLayers := cityFormulaLayers(cs.cityPath, cfg)
+	cityAA, err := automations.Scan(fsys.OSFS{}, cityLayers, cfg.Automations.Skip)
+	if err != nil {
+		return nil
+	}
+
+	var rigAA []automations.Automation
+	for rigName, layers := range cfg.FormulaLayers.Rigs {
+		exclusive := rigExclusiveLayers(layers, cityLayers)
+		if len(exclusive) == 0 {
+			continue
+		}
+		ra, err := automations.Scan(fsys.OSFS{}, exclusive, cfg.Automations.Skip)
+		if err != nil {
+			continue
+		}
+		for i := range ra {
+			ra[i].Rig = rigName
+		}
+		rigAA = append(rigAA, ra...)
+	}
+
+	allAA := make([]automations.Automation, 0, len(cityAA)+len(rigAA))
+	allAA = append(allAA, cityAA...)
+	allAA = append(allAA, rigAA...)
+
+	if len(cfg.Automations.Overrides) > 0 {
+		automations.ApplyOverrides(allAA, convertOverrides(cfg.Automations.Overrides)) //nolint:errcheck // best-effort
+	}
+
+	return allAA
+}
+
 // --- api.StateMutator implementation ---
+
+// EnableAutomation creates or updates an override with enabled=true.
+func (cs *controllerState) EnableAutomation(name, rig string) error {
+	enabled := true
+	return cs.editor.SetAutomationOverride(config.AutomationOverride{
+		Name:    name,
+		Rig:     rig,
+		Enabled: &enabled,
+	})
+}
+
+// DisableAutomation creates or updates an override with enabled=false.
+func (cs *controllerState) DisableAutomation(name, rig string) error {
+	enabled := false
+	return cs.editor.SetAutomationOverride(config.AutomationOverride{
+		Name:    name,
+		Rig:     rig,
+		Enabled: &enabled,
+	})
+}
 
 // spAndSession captures the session provider and computes the session name
 // in a single critical section to avoid TOCTOU with config reloads.
-func (cs *controllerState) spAndSession(name string) (session.Provider, string) {
+func (cs *controllerState) spAndSession(name string) (runtime.Provider, string) {
 	cs.mu.RLock()
 	sp := cs.sp
 	tmpl := cs.cfg.Workspace.SessionTemplate

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"time"
 )
 
 // Server is the GC API HTTP server. It serves /v0/* endpoints and /health.
@@ -16,11 +17,18 @@ type Server struct {
 	// sessionLogSearchPaths overrides the default search paths for Claude
 	// session JSONL files. Nil means use sessionlog.DefaultSearchPaths().
 	sessionLogSearchPaths []string
+
+	// idem caches responses for Idempotency-Key replay on create endpoints.
+	idem *idempotencyCache
 }
 
 // New creates a Server with all routes registered. Does not start listening.
 func New(state State) *Server {
-	s := &Server{state: state, mux: http.NewServeMux()}
+	s := &Server{
+		state: state,
+		mux:   http.NewServeMux(),
+		idem:  newIdempotencyCache(30 * time.Minute),
+	}
 	s.registerRoutes()
 	return s
 }
@@ -28,7 +36,12 @@ func New(state State) *Server {
 // NewReadOnly creates a read-only Server that rejects all mutation requests.
 // Use this when the server binds to a non-localhost address.
 func NewReadOnly(state State) *Server {
-	s := &Server{state: state, mux: http.NewServeMux(), readOnly: true}
+	s := &Server{
+		state:    state,
+		mux:      http.NewServeMux(),
+		readOnly: true,
+		idem:     newIdempotencyCache(30 * time.Minute),
+	}
 	s.registerRoutes()
 	return s
 }
@@ -43,7 +56,7 @@ func (s *Server) handler() http.Handler {
 	if s.readOnly {
 		inner = withReadOnly(inner)
 	}
-	return withLogging(withRecovery(withCORS(inner)))
+	return withLogging(withRecovery(withRequestID(withCORS(inner))))
 }
 
 // ListenAndServe starts the HTTP listener. Blocks until stopped.
@@ -78,6 +91,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 
 	// City
+	s.mux.HandleFunc("GET /v0/city", s.handleCityGet)
 	s.mux.HandleFunc("PATCH /v0/city", s.handleCityPatch)
 
 	// Agents — read
@@ -136,7 +150,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /v0/bead/{id}", s.handleBeadGet)
 	s.mux.HandleFunc("GET /v0/bead/{id}/deps", s.handleBeadDeps)
 	s.mux.HandleFunc("POST /v0/bead/{id}/close", s.handleBeadClose)
+	s.mux.HandleFunc("POST /v0/bead/{id}/reopen", s.handleBeadReopen)
 	s.mux.HandleFunc("POST /v0/bead/{id}/update", s.handleBeadUpdate)
+	s.mux.HandleFunc("PATCH /v0/bead/{id}", s.handleBeadUpdate)
+	s.mux.HandleFunc("POST /v0/bead/{id}/assign", s.handleBeadAssign)
+	s.mux.HandleFunc("DELETE /v0/bead/{id}", s.handleBeadDelete)
 
 	// Mail
 	s.mux.HandleFunc("GET /v0/mail", s.handleMailList)
@@ -148,17 +166,37 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /v0/mail/{id}/mark-unread", s.handleMailMarkUnread)
 	s.mux.HandleFunc("POST /v0/mail/{id}/archive", s.handleMailArchive)
 	s.mux.HandleFunc("POST /v0/mail/{id}/reply", s.handleMailReply)
+	s.mux.HandleFunc("DELETE /v0/mail/{id}", s.handleMailDelete)
 
 	// Convoys
 	s.mux.HandleFunc("GET /v0/convoys", s.handleConvoyList)
 	s.mux.HandleFunc("POST /v0/convoys", s.handleConvoyCreate)
 	s.mux.HandleFunc("GET /v0/convoy/{id}", s.handleConvoyGet)
 	s.mux.HandleFunc("POST /v0/convoy/{id}/add", s.handleConvoyAdd)
+	s.mux.HandleFunc("POST /v0/convoy/{id}/remove", s.handleConvoyRemove)
+	s.mux.HandleFunc("GET /v0/convoy/{id}/check", s.handleConvoyCheck)
 	s.mux.HandleFunc("POST /v0/convoy/{id}/close", s.handleConvoyClose)
+	s.mux.HandleFunc("DELETE /v0/convoy/{id}", s.handleConvoyDelete)
 
 	// Events
 	s.mux.HandleFunc("GET /v0/events", s.handleEventList)
 	s.mux.HandleFunc("GET /v0/events/stream", s.handleEventStream)
+	s.mux.HandleFunc("POST /v0/events", s.handleEventEmit)
+
+	// Automations
+	s.mux.HandleFunc("GET /v0/automations", s.handleAutomationList)
+	s.mux.HandleFunc("GET /v0/automation/{name}", s.handleAutomationGet)
+	s.mux.HandleFunc("POST /v0/automation/{name}/enable", s.handleAutomationEnable)
+	s.mux.HandleFunc("POST /v0/automation/{name}/disable", s.handleAutomationDisable)
+
+	// Sessions (chat sessions)
+	s.mux.HandleFunc("GET /v0/sessions", s.handleSessionList)
+	s.mux.HandleFunc("GET /v0/session/{id}", s.handleSessionGet)
+	s.mux.HandleFunc("POST /v0/session/{id}/suspend", s.handleSessionSuspend)
+	s.mux.HandleFunc("POST /v0/session/{id}/close", s.handleSessionClose)
+
+	// Packs
+	s.mux.HandleFunc("GET /v0/packs", s.handlePackList)
 
 	// Sling (dispatch)
 	s.mux.HandleFunc("POST /v0/sling", s.handleSling)

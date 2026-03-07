@@ -178,7 +178,7 @@ func (s *Store) Get(id string) (beads.Bead, error) {
 
 // Update modifies fields of an existing bead: script update <id> (stdin: JSON)
 func (s *Store) Update(id string, opts beads.UpdateOpts) error {
-	data, err := marshalUpdate(opts.Description, opts.ParentID, opts.Assignee, opts.Labels)
+	data, err := marshalUpdate(opts.Title, opts.Description, opts.ParentID, opts.Assignee, opts.Labels)
 	if err != nil {
 		return fmt.Errorf("exec beads update: marshaling: %w", err)
 	}

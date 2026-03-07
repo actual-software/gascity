@@ -23,7 +23,7 @@ import (
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/hooks"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/gastownhall/gascity/internal/supervisor"
 	"github.com/spf13/cobra"
 )
@@ -871,9 +871,9 @@ func effectiveProviderName(configured string) string {
 // It delegates to buildAgentsFromConfig with a stable beacon timestamp
 // and no multi-instance registry (multi agents are not yet supported
 // in supervisor mode).
-func supervisorBuildAgentsFn(cityPath, cityName string, stderr io.Writer) func(*config.City, session.Provider) []agent.Agent {
+func supervisorBuildAgentsFn(cityPath, cityName string, stderr io.Writer) func(*config.City, runtime.Provider) []agent.Agent {
 	beaconTime := time.Now()
-	return func(c *config.City, sp session.Provider) []agent.Agent {
+	return func(c *config.City, sp runtime.Provider) []agent.Agent {
 		return buildAgentsFromConfig(cityName, cityPath, beaconTime, c, sp, nil, "gc supervisor", stderr)
 	}
 }

@@ -11,7 +11,7 @@ import (
 
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 // fakeDrainOps is a test double for drainOps.
@@ -141,8 +141,8 @@ func (f *fakeDrainOps) clearDriftRestart(sessionName string) error {
 
 func TestDoAgentDrain(t *testing.T) {
 	dops := newFakeDrainOps()
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "worker", session.Config{Command: "echo"}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "worker", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -168,7 +168,7 @@ func TestDoAgentDrain(t *testing.T) {
 
 func TestDoAgentDrainNotRunning(t *testing.T) {
 	dops := newFakeDrainOps()
-	sp := session.NewFake() // no sessions started
+	sp := runtime.NewFake() // no sessions started
 
 	var stdout, stderr bytes.Buffer
 	code := doAgentDrain(dops, sp, events.Discard, "worker", "worker", &stdout, &stderr)
@@ -183,8 +183,8 @@ func TestDoAgentDrainNotRunning(t *testing.T) {
 func TestDoAgentDrainSetError(t *testing.T) {
 	dops := newFakeDrainOps()
 	dops.err = errors.New("tmux borked")
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "worker", session.Config{Command: "echo"}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "worker", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -205,8 +205,8 @@ func TestDoAgentDrainSetError(t *testing.T) {
 func TestDoAgentUndrain(t *testing.T) {
 	dops := newFakeDrainOps()
 	dops.draining["worker"] = true
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "worker", session.Config{Command: "echo"}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "worker", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -229,7 +229,7 @@ func TestDoAgentUndrain(t *testing.T) {
 
 func TestDoAgentUndrainNotRunning(t *testing.T) {
 	dops := newFakeDrainOps()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 
 	var stdout, stderr bytes.Buffer
 	code := doAgentUndrain(dops, sp, events.Discard, "worker", "worker", &stdout, &stderr)
@@ -312,7 +312,7 @@ func TestDoAgentDrainAckError(t *testing.T) {
 
 func TestNewDrainOpsAlwaysReturnsNonNil(t *testing.T) {
 	// newDrainOps works with any Provider — no type assertions.
-	fp := session.NewFake()
+	fp := runtime.NewFake()
 	dops := newDrainOps(fp)
 	if dops == nil {
 		t.Fatal("newDrainOps(Fake) = nil, want non-nil")
@@ -324,8 +324,8 @@ func TestNewDrainOpsAlwaysReturnsNonNil(t *testing.T) {
 
 func TestProviderDrainOpsRoundTrip(t *testing.T) {
 	// Verify drain ops work through Provider meta interface.
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "worker", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "worker", runtime.Config{})
 	dops := newDrainOps(sp)
 
 	// Not draining initially.
@@ -411,8 +411,8 @@ func TestRequestRestartAcceptsNoArgs(t *testing.T) {
 }
 
 func TestProviderDrainOpsRestartRequestedRoundTrip(t *testing.T) {
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "worker", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "worker", runtime.Config{})
 	dops := newDrainOps(sp)
 
 	// Not requested initially.
@@ -441,8 +441,8 @@ func TestProviderDrainOpsRestartRequestedRoundTrip(t *testing.T) {
 }
 
 func TestProviderDrainOpsDriftRestartRoundTrip(t *testing.T) {
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "worker", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "worker", runtime.Config{})
 	dops := newDrainOps(sp)
 
 	// Not drift-restart initially.

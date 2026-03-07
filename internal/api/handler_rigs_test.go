@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/config"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 func TestRigList(t *testing.T) {
@@ -69,7 +69,7 @@ func TestRigEnrichment(t *testing.T) {
 		{Name: "worker", Dir: "myrig"},
 		{Name: "coder", Dir: "myrig"},
 	}
-	state.sp.Start(context.Background(), "myrig--worker", session.Config{}) //nolint:errcheck
+	state.sp.Start(context.Background(), "myrig--worker", runtime.Config{}) //nolint:errcheck
 	srv := New(state)
 
 	rec := httptest.NewRecorder()

@@ -49,8 +49,32 @@ func TestCORSOnRegularRequest(t *testing.T) {
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://127.0.0.1:8080" {
 		t.Errorf("CORS origin = %q, want %q", got, "http://127.0.0.1:8080")
 	}
-	if got := rec.Header().Get("Access-Control-Expose-Headers"); got != "X-GC-Index" {
-		t.Errorf("CORS expose = %q, want %q", got, "X-GC-Index")
+	if got := rec.Header().Get("Access-Control-Expose-Headers"); got != "X-GC-Index, X-GC-Request-Id" {
+		t.Errorf("CORS expose = %q, want %q", got, "X-GC-Index, X-GC-Request-Id")
+	}
+}
+
+func TestRequestIDHeader(t *testing.T) {
+	state := newFakeState(t)
+	srv := New(state)
+
+	req := httptest.NewRequest("GET", "/v0/status", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	rid := rec.Header().Get("X-GC-Request-Id")
+	if rid == "" {
+		t.Fatal("X-GC-Request-Id header missing")
+	}
+	if len(rid) != 16 {
+		t.Errorf("X-GC-Request-Id length = %d, want 16 hex chars", len(rid))
+	}
+
+	// Each request gets a unique ID.
+	rec2 := httptest.NewRecorder()
+	srv.ServeHTTP(rec2, httptest.NewRequest("GET", "/v0/status", nil))
+	if rec2.Header().Get("X-GC-Request-Id") == rid {
+		t.Error("two requests should have different request IDs")
 	}
 }
 

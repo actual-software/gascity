@@ -251,6 +251,9 @@ func (s *Server) handleAgentAction(w http.ResponseWriter, r *http.Request) {
 	} else if after, found := strings.CutSuffix(name, "/nudge"); found {
 		name = after
 		action = "nudge"
+	} else if after, found := strings.CutSuffix(name, "/restart"); found {
+		name = after
+		action = "restart"
 	} else {
 		writeError(w, http.StatusNotFound, "not_found", "unknown agent action")
 		return
@@ -298,6 +301,8 @@ func (s *Server) handleAgentAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		err = sm.NudgeAgent(name, body.Message)
+	case "restart":
+		err = sm.KillAgent(name) // reconciler restarts the agent
 	}
 
 	if err != nil {

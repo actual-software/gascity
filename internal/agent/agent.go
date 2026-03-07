@@ -1,7 +1,7 @@
 // Package agent provides the Agent interface for managed agent lifecycle.
 //
 // An Agent encapsulates identity (name, session name) and lifecycle
-// operations (start, stop, attach) backed by a [session.Provider].
+// operations (start, stop, attach) backed by a [runtime.Provider].
 // The CLI layer builds agents from config; the do* functions operate
 // on them without knowing how sessions are implemented.
 package agent
@@ -15,7 +15,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 // Handle is the narrow interface for per-agent operations that don't
@@ -76,10 +76,10 @@ type Agent interface {
 	// Attach connects the user's terminal to the agent's session.
 	Attach() error
 
-	// SessionConfig returns the session.Config this agent would use
+	// SessionConfig returns the runtime.Config this agent would use
 	// when starting. Used by reconciliation to compute config fingerprints
 	// without actually starting the agent.
-	SessionConfig() session.Config
+	SessionConfig() runtime.Config
 
 	// ClearScrollback clears the scrollback history of the agent's session.
 	// Best-effort.
@@ -94,7 +94,7 @@ type Agent interface {
 	SendKeys(keys ...string) error
 
 	// RunLive re-applies session_live commands to the running session.
-	RunLive(cfg session.Config) error
+	RunLive(cfg runtime.Config) error
 
 	// ProcessAlive reports whether the agent's session has a live process
 	// matching its configured process names.
@@ -108,7 +108,7 @@ type Agent interface {
 }
 
 // StartupHints carries provider startup behavior from config resolution
-// through to session.Config. All fields are optional — zero values mean
+// through to runtime.Config. All fields are optional — zero values mean
 // no special startup handling (fire-and-forget).
 type StartupHints struct {
 	ReadyPromptPrefix      string
@@ -137,7 +137,7 @@ type StartupHints struct {
 	OverlayDir string
 	// CopyFiles lists files/directories to stage in the session's working
 	// directory before the agent command starts.
-	CopyFiles []session.CopyEntry
+	CopyFiles []runtime.CopyEntry
 }
 
 // sessionData holds template variables for custom session naming.
@@ -212,7 +212,7 @@ func New(name, cityName, command, prompt string,
 	env map[string]string, hints StartupHints, workDir string,
 	sessionTemplate string,
 	fpExtra map[string]string,
-	sp session.Provider,
+	sp runtime.Provider,
 	onStop ...func() error,
 ) Agent {
 	return &managed{
@@ -232,7 +232,7 @@ func New(name, cityName, command, prompt string,
 // HandleFor creates a lightweight Handle for an agent. Use this when you
 // only need to query, nudge, peek, or stop an agent — not manage its
 // full lifecycle. Takes 4 params vs New()'s 10.
-func HandleFor(name, cityName, sessionTemplate string, sp session.Provider, onStop ...func() error) Handle {
+func HandleFor(name, cityName, sessionTemplate string, sp runtime.Provider, onStop ...func() error) Handle {
 	return &managed{
 		name:        name,
 		sessionName: SessionNameFor(cityName, name, sessionTemplate),
@@ -242,7 +242,7 @@ func HandleFor(name, cityName, sessionTemplate string, sp session.Provider, onSt
 }
 
 // managed is the concrete Agent implementation that delegates to a
-// session.Provider using the agent's session name.
+// runtime.Provider using the agent's session name.
 type managed struct {
 	name        string
 	sessionName string
@@ -252,7 +252,7 @@ type managed struct {
 	hints       StartupHints
 	workDir     string
 	fpExtra     map[string]string
-	sp          session.Provider
+	sp          runtime.Provider
 	observer    ObservationStrategy // nil = no structured observation
 	onStop      []func() error      // cleanup callbacks run after session stop
 }
@@ -288,13 +288,13 @@ func (a *managed) Peek(lines int) (string, error) {
 	return a.sp.Peek(a.sessionName, lines)
 }
 
-// SessionConfig returns the session.Config this agent would use when starting.
-func (a *managed) SessionConfig() session.Config {
+// SessionConfig returns the runtime.Config this agent would use when starting.
+func (a *managed) SessionConfig() runtime.Config {
 	cmd := a.command
 	if a.prompt != "" {
 		cmd = cmd + " " + shellQuote(a.prompt)
 	}
-	return session.Config{
+	return runtime.Config{
 		Command:                cmd,
 		Env:                    a.env,
 		WorkDir:                a.workDir,
@@ -319,7 +319,7 @@ func (a *managed) ProcessAlive() bool                  { return a.sp.ProcessAliv
 func (a *managed) ClearScrollback() error              { return a.sp.ClearScrollback(a.sessionName) }
 func (a *managed) GetLastActivity() (time.Time, error) { return a.sp.GetLastActivity(a.sessionName) }
 func (a *managed) SendKeys(keys ...string) error       { return a.sp.SendKeys(a.sessionName, keys...) }
-func (a *managed) RunLive(cfg session.Config) error    { return a.sp.RunLive(a.sessionName, cfg) }
+func (a *managed) RunLive(cfg runtime.Config) error    { return a.sp.RunLive(a.sessionName, cfg) }
 func (a *managed) SetMeta(key, value string) error     { return a.sp.SetMeta(a.sessionName, key, value) }
 func (a *managed) GetMeta(key string) (string, error)  { return a.sp.GetMeta(a.sessionName, key) }
 func (a *managed) RemoveMeta(key string) error         { return a.sp.RemoveMeta(a.sessionName, key) }

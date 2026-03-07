@@ -924,3 +924,91 @@ func TestDeleteProviderPatch(t *testing.T) {
 		t.Error("patches.providers should be empty after delete")
 	}
 }
+
+func TestSetAutomationOverride(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTOML(t, dir, minimalCity())
+	ed := configedit.NewEditor(fsys.OSFS{}, path)
+
+	enabled := false
+	err := ed.SetAutomationOverride(config.AutomationOverride{
+		Name:    "health-check",
+		Enabled: &enabled,
+	})
+	if err != nil {
+		t.Fatalf("SetAutomationOverride: %v", err)
+	}
+
+	cfg := readTOML(t, path)
+	if len(cfg.Automations.Overrides) != 1 {
+		t.Fatalf("expected 1 override, got %d", len(cfg.Automations.Overrides))
+	}
+	ov := cfg.Automations.Overrides[0]
+	if ov.Name != "health-check" {
+		t.Errorf("override name = %q, want %q", ov.Name, "health-check")
+	}
+	if ov.Enabled == nil || *ov.Enabled {
+		t.Error("expected enabled=false")
+	}
+}
+
+func TestSetAutomationOverride_UpdateExisting(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTOML(t, dir, minimalCity())
+	ed := configedit.NewEditor(fsys.OSFS{}, path)
+
+	disabled := false
+	_ = ed.SetAutomationOverride(config.AutomationOverride{
+		Name:    "health-check",
+		Enabled: &disabled,
+	})
+
+	enabled := true
+	err := ed.SetAutomationOverride(config.AutomationOverride{
+		Name:    "health-check",
+		Enabled: &enabled,
+	})
+	if err != nil {
+		t.Fatalf("SetAutomationOverride (update): %v", err)
+	}
+
+	cfg := readTOML(t, path)
+	if len(cfg.Automations.Overrides) != 1 {
+		t.Fatalf("expected 1 override, got %d", len(cfg.Automations.Overrides))
+	}
+	if cfg.Automations.Overrides[0].Enabled == nil || !*cfg.Automations.Overrides[0].Enabled {
+		t.Error("expected enabled=true after update")
+	}
+}
+
+func TestDeleteAutomationOverride(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTOML(t, dir, minimalCity())
+	ed := configedit.NewEditor(fsys.OSFS{}, path)
+
+	enabled := false
+	_ = ed.SetAutomationOverride(config.AutomationOverride{
+		Name:    "health-check",
+		Enabled: &enabled,
+	})
+
+	if err := ed.DeleteAutomationOverride("health-check", ""); err != nil {
+		t.Fatalf("DeleteAutomationOverride: %v", err)
+	}
+
+	cfg := readTOML(t, path)
+	if len(cfg.Automations.Overrides) != 0 {
+		t.Error("overrides should be empty after delete")
+	}
+}
+
+func TestDeleteAutomationOverride_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTOML(t, dir, minimalCity())
+	ed := configedit.NewEditor(fsys.OSFS{}, path)
+
+	err := ed.DeleteAutomationOverride("nonexistent", "")
+	if err == nil {
+		t.Fatal("expected error for deleting nonexistent override")
+	}
+}

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 func TestSessionNameFor(t *testing.T) {
@@ -109,8 +109,8 @@ func TestSessionNameForExecutionError(t *testing.T) {
 }
 
 func TestHandleFor(t *testing.T) {
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 
 	h := HandleFor("mayor", "city", "", sp)
 
@@ -138,7 +138,7 @@ func TestHandleFor(t *testing.T) {
 }
 
 func TestHandleForCustomTemplate(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	h := HandleFor("mayor", "city", "{{.City}}-{{.Name}}", sp)
 
 	if got := h.SessionName(); got != "city-mayor" {
@@ -147,7 +147,7 @@ func TestHandleForCustomTemplate(t *testing.T) {
 }
 
 func TestManagedName(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "claude", "", nil, StartupHints{}, "", "", nil, sp)
 	if got := a.Name(); got != "mayor" {
 		t.Errorf("Name() = %q, want %q", got, "mayor")
@@ -155,7 +155,7 @@ func TestManagedName(t *testing.T) {
 }
 
 func TestManagedSessionName(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "claude", "", nil, StartupHints{}, "", "", nil, sp)
 	if got := a.SessionName(); got != "mayor" {
 		t.Errorf("SessionName() = %q, want %q", got, "mayor")
@@ -163,7 +163,7 @@ func TestManagedSessionName(t *testing.T) {
 }
 
 func TestManagedSessionNameCustomTemplate(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "claude", "", nil, StartupHints{}, "", "{{.City}}-{{.Name}}", nil, sp)
 	if got := a.SessionName(); got != "city-mayor" {
 		t.Errorf("SessionName() = %q, want %q", got, "city-mayor")
@@ -171,7 +171,7 @@ func TestManagedSessionNameCustomTemplate(t *testing.T) {
 }
 
 func TestManagedStart(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "claude --skip", "", nil, StartupHints{}, "", "", nil, sp)
 
 	if err := a.Start(context.Background()); err != nil {
@@ -195,7 +195,7 @@ func TestManagedStart(t *testing.T) {
 }
 
 func TestManagedStartWithPrompt(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "claude --skip", "You are a mayor", nil, StartupHints{}, "", "", nil, sp)
 
 	if err := a.Start(context.Background()); err != nil {
@@ -210,7 +210,7 @@ func TestManagedStartWithPrompt(t *testing.T) {
 }
 
 func TestManagedStartWithEnv(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	env := map[string]string{"GC_AGENT": "mayor"}
 	a := New("mayor", "city", "claude", "", env, StartupHints{}, "", "", nil, sp)
 
@@ -225,7 +225,7 @@ func TestManagedStartWithEnv(t *testing.T) {
 }
 
 func TestManagedStartWithHints(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	hints := StartupHints{
 		ReadyPromptPrefix:      "> ",
 		ReadyDelayMs:           5000,
@@ -254,7 +254,7 @@ func TestManagedStartWithHints(t *testing.T) {
 }
 
 func TestManagedStartWithZeroHints(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "claude", "", nil, StartupHints{}, "", "", nil, sp)
 
 	if err := a.Start(context.Background()); err != nil {
@@ -277,7 +277,7 @@ func TestManagedStartWithZeroHints(t *testing.T) {
 }
 
 func TestManagedStartAllParamsCombined(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	env := map[string]string{"GC_AGENT": "mayor"}
 	hints := StartupHints{
 		ReadyPromptPrefix:      "❯ ",
@@ -315,7 +315,7 @@ func TestManagedStartAllParamsCombined(t *testing.T) {
 }
 
 func TestManagedStartError(t *testing.T) {
-	sp := session.NewFailFake()
+	sp := runtime.NewFailFake()
 	a := New("mayor", "city", "claude", "", nil, StartupHints{}, "", "", nil, sp)
 
 	err := a.Start(context.Background())
@@ -325,7 +325,7 @@ func TestManagedStartError(t *testing.T) {
 }
 
 func TestManagedStopError(t *testing.T) {
-	sp := session.NewFailFake()
+	sp := runtime.NewFailFake()
 	a := New("mayor", "city", "", "", nil, StartupHints{}, "", "", nil, sp)
 
 	err := a.Stop()
@@ -335,7 +335,7 @@ func TestManagedStopError(t *testing.T) {
 }
 
 func TestManagedAttachError(t *testing.T) {
-	sp := session.NewFailFake()
+	sp := runtime.NewFailFake()
 	a := New("mayor", "city", "", "", nil, StartupHints{}, "", "", nil, sp)
 
 	err := a.Attach()
@@ -345,7 +345,7 @@ func TestManagedAttachError(t *testing.T) {
 }
 
 func TestManagedSessionConfig(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	env := map[string]string{"GC_AGENT": "mayor"}
 	hints := StartupHints{
 		ReadyPromptPrefix:      "> ",
@@ -385,7 +385,7 @@ func TestManagedSessionConfig(t *testing.T) {
 }
 
 func TestManagedSessionConfigWorkDir(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("worker", "city", "claude", "", nil, StartupHints{}, "/tmp/project", "", nil, sp)
 
 	cfg := a.SessionConfig()
@@ -395,7 +395,7 @@ func TestManagedSessionConfigWorkDir(t *testing.T) {
 }
 
 func TestManagedSessionConfigEmptyWorkDir(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("worker", "city", "claude", "", nil, StartupHints{}, "", "", nil, sp)
 
 	cfg := a.SessionConfig()
@@ -405,7 +405,7 @@ func TestManagedSessionConfigEmptyWorkDir(t *testing.T) {
 }
 
 func TestManagedSessionConfigOverlayDir(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	hints := StartupHints{OverlayDir: "/tmp/overlay"}
 	a := New("worker", "city", "claude", "", nil, hints, "", "", nil, sp)
 
@@ -416,7 +416,7 @@ func TestManagedSessionConfigOverlayDir(t *testing.T) {
 }
 
 func TestManagedSessionConfigNoPrompt(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "claude", "", nil, StartupHints{}, "", "", nil, sp)
 
 	cfg := a.SessionConfig()
@@ -430,7 +430,7 @@ func TestManagedSessionConfigNoPrompt(t *testing.T) {
 // is shell-quoted and appended. This is critical for agents using
 // start_command = "bash" where extra arguments would be misinterpreted.
 func TestPromptModeNone(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// When prompt_mode="none", cmd_start.go and pool.go pass prompt="" to agent.New().
 	// The command should remain exactly as configured.
 	a := New("worker", "city", "bash", "", nil, StartupHints{}, "/tmp/work", "", nil, sp)
@@ -468,8 +468,8 @@ func TestShellQuote(t *testing.T) {
 }
 
 func TestManagedStop(t *testing.T) {
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	sp.Calls = nil
 
 	a := New("mayor", "city", "", "", nil, StartupHints{}, "", "", nil, sp)
@@ -489,14 +489,14 @@ func TestManagedStop(t *testing.T) {
 }
 
 func TestManagedIsRunning(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "", "", nil, StartupHints{}, "", "", nil, sp)
 
 	if a.IsRunning() {
 		t.Error("IsRunning() = true before Start, want false")
 	}
 
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	sp.Calls = nil
 
 	if !a.IsRunning() {
@@ -514,12 +514,12 @@ func TestManagedIsRunning(t *testing.T) {
 }
 
 func TestManagedIsRunningZombie(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	hints := StartupHints{ProcessNames: []string{"claude", "node"}}
 	a := New("mayor", "city", "claude", "", nil, hints, "", "", nil, sp)
 
 	// Start the session, then mark it as zombie.
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	sp.Zombies["mayor"] = true
 
 	if a.IsRunning() {
@@ -528,11 +528,11 @@ func TestManagedIsRunningZombie(t *testing.T) {
 }
 
 func TestManagedIsRunningHealthy(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	hints := StartupHints{ProcessNames: []string{"claude", "node"}}
 	a := New("mayor", "city", "claude", "", nil, hints, "", "", nil, sp)
 
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 
 	if !a.IsRunning() {
 		t.Error("IsRunning() = false for healthy session, want true")
@@ -540,10 +540,10 @@ func TestManagedIsRunningHealthy(t *testing.T) {
 }
 
 func TestManagedIsRunningNoProcessNames(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "claude", "", nil, StartupHints{}, "", "", nil, sp)
 
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	sp.Zombies["mayor"] = true // zombie, but no process names configured
 
 	if !a.IsRunning() {
@@ -552,8 +552,8 @@ func TestManagedIsRunningNoProcessNames(t *testing.T) {
 }
 
 func TestManagedNudge(t *testing.T) {
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	sp.Calls = nil
 
 	a := New("mayor", "city", "", "", nil, StartupHints{}, "", "", nil, sp)
@@ -577,7 +577,7 @@ func TestManagedNudge(t *testing.T) {
 }
 
 func TestManagedNudgeError(t *testing.T) {
-	sp := session.NewFailFake()
+	sp := runtime.NewFailFake()
 	a := New("mayor", "city", "", "", nil, StartupHints{}, "", "", nil, sp)
 
 	err := a.Nudge("wake up")
@@ -587,8 +587,8 @@ func TestManagedNudgeError(t *testing.T) {
 }
 
 func TestManagedAttach(t *testing.T) {
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	sp.Calls = nil
 
 	a := New("mayor", "city", "", "", nil, StartupHints{}, "", "", nil, sp)
@@ -608,8 +608,8 @@ func TestManagedAttach(t *testing.T) {
 }
 
 func TestManagedInterrupt(t *testing.T) {
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	sp.Calls = nil
 
 	a := New("mayor", "city", "", "", nil, StartupHints{}, "", "", nil, sp)
@@ -626,11 +626,11 @@ func TestManagedInterrupt(t *testing.T) {
 }
 
 func TestManagedProcessAlive(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	hints := StartupHints{ProcessNames: []string{"claude"}}
 	a := New("mayor", "city", "claude", "", nil, hints, "", "", nil, sp)
 
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 
 	if !a.ProcessAlive() {
 		t.Error("ProcessAlive() = false for healthy session, want true")
@@ -643,7 +643,7 @@ func TestManagedProcessAlive(t *testing.T) {
 }
 
 func TestManagedClearScrollback(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "", "", nil, StartupHints{}, "", "", nil, sp)
 	sp.Calls = nil
 
@@ -657,7 +657,7 @@ func TestManagedClearScrollback(t *testing.T) {
 }
 
 func TestManagedGetLastActivity(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	now := time.Now()
 	sp.SetActivity("mayor", now)
 
@@ -678,7 +678,7 @@ func TestManagedGetLastActivity(t *testing.T) {
 }
 
 func TestManagedSendKeys(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "", "", nil, StartupHints{}, "", "", nil, sp)
 	sp.Calls = nil
 
@@ -692,11 +692,11 @@ func TestManagedSendKeys(t *testing.T) {
 }
 
 func TestManagedRunLive(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "", "", nil, StartupHints{}, "", "", nil, sp)
 	sp.Calls = nil
 
-	cfg := session.Config{SessionLive: []string{"echo hello"}}
+	cfg := runtime.Config{SessionLive: []string{"echo hello"}}
 	if err := a.RunLive(cfg); err != nil {
 		t.Fatalf("RunLive() = %v, want nil", err)
 	}
@@ -707,7 +707,7 @@ func TestManagedRunLive(t *testing.T) {
 }
 
 func TestManagedSetGetRemoveMeta(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "", "", nil, StartupHints{}, "", "", nil, sp)
 	sp.Calls = nil
 
@@ -748,7 +748,7 @@ func TestManagedSetGetRemoveMeta(t *testing.T) {
 }
 
 func TestManagedEventsNilWithoutObserver(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "echo", "", nil, StartupHints{}, "", "", nil, sp)
 
 	if ch := a.Events(); ch != nil {
@@ -757,7 +757,7 @@ func TestManagedEventsNilWithoutObserver(t *testing.T) {
 }
 
 func TestManagedSetObserverAndEvents(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "echo", "", nil, StartupHints{}, "", "", nil, sp)
 
 	// Create a simple mock observer.
@@ -786,7 +786,7 @@ func TestManagedSetObserverAndEvents(t *testing.T) {
 }
 
 func TestManagedSetObserverClosesOld(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := New("mayor", "city", "echo", "", nil, StartupHints{}, "", "", nil, sp)
 
 	old := &fakeObserver{ch: make(chan Event)}
@@ -802,8 +802,8 @@ func TestManagedSetObserverClosesOld(t *testing.T) {
 }
 
 func TestManagedStopClosesObserver(t *testing.T) {
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	a := New("mayor", "city", "", "", nil, StartupHints{}, "", "", nil, sp)
 
 	obs := &fakeObserver{ch: make(chan Event)}
@@ -822,8 +822,8 @@ func TestManagedStopClosesObserver(t *testing.T) {
 }
 
 func TestManagedDoubleStopSafe(t *testing.T) {
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	a := New("mayor", "city", "", "", nil, StartupHints{}, "", "", nil, sp)
 
 	obs := &fakeObserver{ch: make(chan Event)}
@@ -839,8 +839,8 @@ func TestManagedDoubleStopSafe(t *testing.T) {
 }
 
 func TestManagedStopRunsOnStopCallbacks(t *testing.T) {
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "worker", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "worker", runtime.Config{})
 
 	var called1, called2 bool
 	cb1 := func() error { called1 = true; return nil }
@@ -856,7 +856,7 @@ func TestManagedStopRunsOnStopCallbacks(t *testing.T) {
 }
 
 func TestManagedStopSkipsCallbacksOnError(t *testing.T) {
-	sp := session.NewFailFake()
+	sp := runtime.NewFailFake()
 
 	var called bool
 	cb := func() error { called = true; return nil }
@@ -871,8 +871,8 @@ func TestManagedStopSkipsCallbacksOnError(t *testing.T) {
 }
 
 func TestHandleForWithOnStop(t *testing.T) {
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "worker", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "worker", runtime.Config{})
 
 	var called bool
 	cb := func() error { called = true; return nil }

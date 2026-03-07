@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"log"
 	"net/http"
 	"runtime/debug"
@@ -39,7 +41,7 @@ func withCORS(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Last-Event-ID, X-GC-Request")
-			w.Header().Set("Access-Control-Expose-Headers", "X-GC-Index")
+			w.Header().Set("Access-Control-Expose-Headers", "X-GC-Index, X-GC-Request-Id")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -107,6 +109,16 @@ func isLocalhostOrigin(origin string) bool {
 		}
 	}
 	return false
+}
+
+// withRequestID adds a unique X-GC-Request-Id header to every response.
+func withRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var buf [8]byte
+		rand.Read(buf[:]) //nolint:errcheck
+		w.Header().Set("X-GC-Request-Id", hex.EncodeToString(buf[:]))
+		next.ServeHTTP(w, r)
+	})
 }
 
 // responseWriter wraps http.ResponseWriter to capture the status code.

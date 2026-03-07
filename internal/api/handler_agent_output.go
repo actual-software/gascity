@@ -71,7 +71,7 @@ func (s *Server) trySessionLogOutput(r *http.Request, name string, agentCfg conf
 
 	searchPaths := s.sessionLogSearchPaths
 	if searchPaths == nil {
-		searchPaths = sessionlog.DefaultSearchPaths()
+		searchPaths = sessionlog.MergeSearchPaths(s.state.Config().Daemon.ObservePaths)
 	}
 	path := sessionlog.FindSessionFile(searchPaths, workDir)
 	if path == "" {
@@ -258,7 +258,7 @@ func (s *Server) handleAgentOutputStream(w http.ResponseWriter, r *http.Request,
 	workDir := s.resolveAgentWorkDir(agentCfg)
 	searchPaths := s.sessionLogSearchPaths
 	if searchPaths == nil {
-		searchPaths = sessionlog.DefaultSearchPaths()
+		searchPaths = sessionlog.MergeSearchPaths(cfg.Daemon.ObservePaths)
 	}
 
 	var logPath string
@@ -266,20 +266,25 @@ func (s *Server) handleAgentOutputStream(w http.ResponseWriter, r *http.Request,
 		logPath = sessionlog.FindSessionFile(searchPaths, workDir)
 	}
 
+	// Check if agent is running.
+	sp := s.state.SessionProvider()
+	sessionName := agentSessionName(s.state.CityName(), name, cfg.Workspace.SessionTemplate)
+	running := sp.IsRunning(sessionName)
+
 	// If no session log and agent isn't running, return 404 before committing SSE headers.
-	if logPath == "" {
-		sp := s.state.SessionProvider()
-		sessionName := agentSessionName(s.state.CityName(), name, cfg.Workspace.SessionTemplate)
-		if !sp.IsRunning(sessionName) {
-			writeError(w, http.StatusNotFound, "not_found", "agent "+name+" not running")
-			return
-		}
+	if logPath == "" && !running {
+		writeError(w, http.StatusNotFound, "not_found", "agent "+name+" not running")
+		return
 	}
 
-	// Commit SSE headers.
+	// Commit SSE headers. Include agent status so clients can distinguish
+	// live streaming from historical replay.
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	if !running {
+		w.Header().Set("GC-Agent-Status", "stopped")
+	}
 	w.WriteHeader(http.StatusOK)
 	if err := http.NewResponseController(w).Flush(); err != nil {
 		_ = err

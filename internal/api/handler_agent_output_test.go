@@ -333,3 +333,41 @@ func TestAgentOutputStreamNewTurns(t *testing.T) {
 		t.Errorf("expected at least 2 SSE turn events, got %d in: %s", strings.Count(body, "event: turn"), body)
 	}
 }
+
+func TestAgentOutputStreamStoppedAgent(t *testing.T) {
+	// When a session log exists but the agent is not running, the stream
+	// should still succeed (replay mode) but include GC-Agent-Status: stopped.
+	state := newFakeState(t)
+	rigDir := t.TempDir()
+	state.cfg.Rigs = []config.Rig{{Name: "myrig", Path: rigDir}}
+
+	searchBase := t.TempDir()
+	writeSessionJSONL(t, searchBase, rigDir,
+		`{"uuid":"1","parentUuid":"","type":"user","message":"{\"role\":\"user\",\"content\":\"hello\"}","timestamp":"2025-01-01T00:00:00Z"}`,
+	)
+
+	srv := newServerWithSearchPaths(state, searchBase)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	req := httptest.NewRequest("GET", "/v0/agent/myrig/worker/output/stream", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		srv.ServeHTTP(rec, req)
+		close(done)
+	}()
+	<-done
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := rec.Header().Get("GC-Agent-Status"); got != "stopped" {
+		t.Errorf("GC-Agent-Status = %q, want %q", got, "stopped")
+	}
+	if !strings.Contains(rec.Body.String(), "hello") {
+		t.Errorf("body should contain session data, got: %s", rec.Body.String())
+	}
+}

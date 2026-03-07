@@ -7,11 +7,11 @@ import (
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 func TestControllerStateReadAccess(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	ep := events.NewFake()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
@@ -56,7 +56,7 @@ func TestControllerStateReadAccess(t *testing.T) {
 }
 
 func TestControllerStateConcurrentAccess(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	ep := events.NewFake()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
@@ -86,7 +86,7 @@ func TestControllerStateConcurrentAccess(t *testing.T) {
 }
 
 func TestControllerStateUpdate(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	ep := events.NewFake()
 	cfg1 := &config.City{
 		Workspace: config.Workspace{Name: "city1"},
@@ -110,7 +110,7 @@ func TestControllerStateUpdate(t *testing.T) {
 		},
 	}
 
-	sp2 := session.NewFake()
+	sp2 := runtime.NewFake()
 	cs.update(cfg2, sp2)
 
 	if len(cs.BeadStores()) != 2 {
@@ -125,7 +125,7 @@ func TestControllerStateUpdate(t *testing.T) {
 }
 
 func TestControllerStateNilEventProvider(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
 	}
@@ -141,7 +141,7 @@ func TestControllerStateNilEventProvider(t *testing.T) {
 // This uses a blank import check, not an explicit runtime assertion.
 var _ interface {
 	Config() *config.City
-	SessionProvider() session.Provider
+	SessionProvider() runtime.Provider
 	BeadStore(string) beads.Store
 	BeadStores() map[string]beads.Store
 	EventProvider() events.Provider

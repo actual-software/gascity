@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gastownhall/gascity/internal/api"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/fsys"
@@ -61,6 +62,18 @@ func cmdSuspend(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "gc suspend: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	if c := apiClient(cityPath); c != nil {
+		err := c.SuspendCity()
+		if err == nil {
+			fmt.Fprintf(stdout, "City suspended (%s)\n", cityPath) //nolint:errcheck // best-effort stdout
+			return 0
+		}
+		if !api.ShouldFallback(err) {
+			fmt.Fprintf(stderr, "gc suspend: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		// Connection error — fall through to direct mutation.
+	}
 	return doSuspendCity(fsys.OSFS{}, cityPath, true, stdout, stderr)
 }
 
@@ -70,6 +83,18 @@ func cmdResume(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "gc resume: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
+	}
+	if c := apiClient(cityPath); c != nil {
+		err := c.ResumeCity()
+		if err == nil {
+			fmt.Fprintf(stdout, "City resumed (%s)\n", cityPath) //nolint:errcheck // best-effort stdout
+			return 0
+		}
+		if !api.ShouldFallback(err) {
+			fmt.Fprintf(stderr, "gc resume: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		// Connection error — fall through to direct mutation.
 	}
 	return doSuspendCity(fsys.OSFS{}, cityPath, false, stdout, stderr)
 }

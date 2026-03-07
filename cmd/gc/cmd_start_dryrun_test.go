@@ -7,11 +7,11 @@ import (
 
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/config"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 func TestPrintDryRunPreview(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 
 	agents := []agent.Agent{
 		agent.New("mayor", "test", "echo hello", "", nil, agent.StartupHints{}, "", "", nil, sp),

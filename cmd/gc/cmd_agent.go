@@ -12,10 +12,11 @@ import (
 	"strings"
 
 	"github.com/gastownhall/gascity/internal/agent"
+	"github.com/gastownhall/gascity/internal/api"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/fsys"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/spf13/cobra"
 )
 
@@ -468,6 +469,19 @@ func cmdAgentSuspend(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "gc agent suspend: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	if c := apiClient(cityPath); c != nil {
+		qname := resolveAgentForAPI(cityPath, args[0])
+		err := c.SuspendAgent(qname)
+		if err == nil {
+			fmt.Fprintf(stdout, "Suspended agent '%s'\n", args[0]) //nolint:errcheck // best-effort stdout
+			return 0
+		}
+		if !api.ShouldFallback(err) {
+			fmt.Fprintf(stderr, "gc agent suspend: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		// Connection error — fall through to direct mutation.
+	}
 	return doAgentSuspend(fsys.OSFS{}, cityPath, args[0], stdout, stderr)
 }
 
@@ -554,6 +568,19 @@ func cmdAgentResume(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "gc agent resume: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
+	}
+	if c := apiClient(cityPath); c != nil {
+		qname := resolveAgentForAPI(cityPath, args[0])
+		err := c.ResumeAgent(qname)
+		if err == nil {
+			fmt.Fprintf(stdout, "Resumed agent '%s'\n", args[0]) //nolint:errcheck // best-effort stdout
+			return 0
+		}
+		if !api.ShouldFallback(err) {
+			fmt.Fprintf(stderr, "gc agent resume: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		// Connection error — fall through to direct mutation.
 	}
 	return doAgentResume(fsys.OSFS{}, cityPath, args[0], stdout, stderr)
 }
@@ -896,7 +923,7 @@ func cmdAgentKill(args []string, stdout, stderr io.Writer) int {
 
 // doAgentKill force-kills an agent's session. The reconciler will restart it
 // on its next tick.
-func doAgentKill(sp session.Provider, rec events.Recorder,
+func doAgentKill(sp runtime.Provider, rec events.Recorder,
 	agentName, sn string, stdout, stderr io.Writer,
 ) int {
 	if !sp.IsRunning(sn) {

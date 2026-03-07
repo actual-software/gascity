@@ -8,11 +8,11 @@ import (
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/config"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 func TestCityStatusEmptyCity(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	dops := newFakeDrainOps()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "bright-lights"},
@@ -43,9 +43,9 @@ func TestCityStatusEmptyCity(t *testing.T) {
 }
 
 func TestCityStatusWithAgents(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// Start one agent session.
-	if err := sp.Start(context.Background(), "mayor", session.Config{Command: "echo"}); err != nil {
+	if err := sp.Start(context.Background(), "mayor", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 	dops := newFakeDrainOps()
@@ -79,7 +79,7 @@ func TestCityStatusWithAgents(t *testing.T) {
 }
 
 func TestCityStatusSuspended(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	dops := newFakeDrainOps()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "city", Suspended: true},
@@ -98,12 +98,12 @@ func TestCityStatusSuspended(t *testing.T) {
 }
 
 func TestCityStatusPoolExpansion(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// Start 2 of 3 pool instances.
-	if err := sp.Start(context.Background(), "hw--polecat-1", session.Config{Command: "echo"}); err != nil {
+	if err := sp.Start(context.Background(), "hw--polecat-1", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sp.Start(context.Background(), "hw--polecat-2", session.Config{Command: "echo"}); err != nil {
+	if err := sp.Start(context.Background(), "hw--polecat-2", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 	dops := newFakeDrainOps()
@@ -148,7 +148,7 @@ func TestCityStatusPoolExpansion(t *testing.T) {
 }
 
 func TestCityStatusRigs(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	dops := newFakeDrainOps()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "city"},
@@ -183,7 +183,7 @@ func TestCityStatusRigs(t *testing.T) {
 }
 
 func TestCityStatusJSONEmpty(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "bright-lights"},
 	}
@@ -216,9 +216,9 @@ func TestCityStatusJSONEmpty(t *testing.T) {
 }
 
 func TestCityStatusJSONWithAgents(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// Start one agent session (default session name = agent name, no city prefix).
-	if err := sp.Start(context.Background(), "mayor", session.Config{Command: "echo"}); err != nil {
+	if err := sp.Start(context.Background(), "mayor", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -293,7 +293,7 @@ func TestCityStatusJSONWithAgents(t *testing.T) {
 }
 
 func TestCityStatusAgentSuspendedByRig(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	dops := newFakeDrainOps()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "city"},

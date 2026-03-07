@@ -73,6 +73,8 @@ type City struct {
 	Automations AutomationsConfig `toml:"automations,omitempty"`
 	// API configures the optional HTTP API server.
 	API APIConfig `toml:"api,omitempty"`
+	// ChatSessions configures chat session behavior (auto-suspend).
+	ChatSessions ChatSessionsConfig `toml:"chat_sessions,omitempty"`
 
 	// FormulaLayers holds the resolved formula directories per scope.
 	// Populated during pack expansion in LoadWithIncludes. Not from TOML.
@@ -703,6 +705,26 @@ func (c APIConfig) BindOrDefault() string {
 		return "127.0.0.1"
 	}
 	return c.Bind
+}
+
+// ChatSessionsConfig configures chat session behavior.
+// Progressive activation: absent or empty = no auto-suspend.
+type ChatSessionsConfig struct {
+	// IdleTimeout is the duration after which a detached chat session
+	// is auto-suspended. Duration string (e.g., "30m", "1h"). 0 = disabled.
+	IdleTimeout string `toml:"idle_timeout,omitempty"`
+}
+
+// IdleTimeoutDuration parses IdleTimeout, returning 0 if unset or invalid.
+func (c ChatSessionsConfig) IdleTimeoutDuration() time.Duration {
+	if c.IdleTimeout == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(c.IdleTimeout)
+	if err != nil {
+		return 0
+	}
+	return d
 }
 
 // DaemonConfig holds controller daemon settings.

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gastownhall/gascity/internal/api"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/hooks"
@@ -375,6 +376,18 @@ func cmdRigSuspend(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "gc rig suspend: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	if c := apiClient(cityPath); c != nil {
+		err := c.SuspendRig(args[0])
+		if err == nil {
+			fmt.Fprintf(stdout, "Suspended rig '%s'\n", args[0]) //nolint:errcheck // best-effort stdout
+			return 0
+		}
+		if !api.ShouldFallback(err) {
+			fmt.Fprintf(stderr, "gc rig suspend: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		// Connection error — fall through to direct mutation.
+	}
 	return doRigSuspend(fsys.OSFS{}, cityPath, args[0], stdout, stderr)
 }
 
@@ -442,6 +455,18 @@ func cmdRigResume(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "gc rig resume: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
+	}
+	if c := apiClient(cityPath); c != nil {
+		err := c.ResumeRig(args[0])
+		if err == nil {
+			fmt.Fprintf(stdout, "Resumed rig '%s'\n", args[0]) //nolint:errcheck // best-effort stdout
+			return 0
+		}
+		if !api.ShouldFallback(err) {
+			fmt.Fprintf(stderr, "gc rig resume: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		// Connection error — fall through to direct mutation.
 	}
 	return doRigResume(fsys.OSFS{}, cityPath, args[0], stdout, stderr)
 }

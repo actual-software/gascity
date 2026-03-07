@@ -26,6 +26,7 @@ type createRequest struct {
 // updateRequest is the JSON wire format sent on stdin for update operations.
 // Null/missing fields are not applied. Labels appends (does not replace).
 type updateRequest struct {
+	Title       *string  `json:"title,omitempty"`
 	Description *string  `json:"description,omitempty"`
 	ParentID    *string  `json:"parent_id,omitempty"`
 	Assignee    *string  `json:"assignee,omitempty"`
@@ -72,8 +73,9 @@ func marshalCreate(b beads.Bead) ([]byte, error) {
 }
 
 // marshalUpdate converts update options to JSON for the exec script.
-func marshalUpdate(description, parentID, assignee *string, labels []string) ([]byte, error) {
+func marshalUpdate(title, description, parentID, assignee *string, labels []string) ([]byte, error) {
 	r := updateRequest{
+		Title:       title,
 		Description: description,
 		ParentID:    parentID,
 		Assignee:    assignee,

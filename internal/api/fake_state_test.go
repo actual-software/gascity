@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/gastownhall/gascity/internal/agent"
+	"github.com/gastownhall/gascity/internal/automations"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/mail"
 	"github.com/gastownhall/gascity/internal/mail/beadmail"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 // newPostRequest creates a POST httptest request with the X-GC-Request header
@@ -27,16 +28,18 @@ func newPostRequest(url string, body io.Reader) *http.Request {
 
 // fakeState implements State for testing.
 type fakeState struct {
-	cfg         *config.City
-	rawCfg      *config.City // optional: raw config for provenance detection
-	sp          *session.Fake
-	stores      map[string]beads.Store
-	mailProvs   map[string]mail.Provider
-	eventProv   events.Provider
-	cityName    string
-	cityPath    string
-	startedAt   time.Time
-	quarantined map[string]bool
+	cfg           *config.City
+	rawCfg        *config.City // optional: raw config for provenance detection
+	sp            *runtime.Fake
+	stores        map[string]beads.Store
+	cityBeadStore beads.Store // city-level store for session beads
+	mailProvs     map[string]mail.Provider
+	eventProv     events.Provider
+	cityName      string
+	cityPath      string
+	startedAt     time.Time
+	quarantined   map[string]bool
+	autos         []automations.Automation
 }
 
 func newFakeState(t *testing.T) *fakeState {
@@ -53,7 +56,7 @@ func newFakeState(t *testing.T) *fakeState {
 				{Name: "myrig", Path: "/tmp/myrig"},
 			},
 		},
-		sp:        session.NewFake(),
+		sp:        runtime.NewFake(),
 		stores:    map[string]beads.Store{"myrig": store},
 		mailProvs: map[string]mail.Provider{"myrig": mp},
 		eventProv: events.NewFake(),
@@ -64,7 +67,7 @@ func newFakeState(t *testing.T) *fakeState {
 }
 
 func (f *fakeState) Config() *config.City                    { return f.cfg }
-func (f *fakeState) SessionProvider() session.Provider       { return f.sp }
+func (f *fakeState) SessionProvider() runtime.Provider       { return f.sp }
 func (f *fakeState) BeadStore(rig string) beads.Store        { return f.stores[rig] }
 func (f *fakeState) BeadStores() map[string]beads.Store      { return f.stores }
 func (f *fakeState) MailProvider(rig string) mail.Provider   { return f.mailProvs[rig] }
@@ -75,6 +78,8 @@ func (f *fakeState) CityPath() string                        { return f.cityPath
 func (f *fakeState) Version() string                         { return "test" }
 func (f *fakeState) StartedAt() time.Time                    { return f.startedAt }
 func (f *fakeState) IsQuarantined(sessionName string) bool   { return f.quarantined[sessionName] }
+func (f *fakeState) CityBeadStore() beads.Store              { return f.cityBeadStore }
+func (f *fakeState) Automations() []automations.Automation   { return f.autos }
 func (f *fakeState) RawConfig() *config.City {
 	if f.rawCfg != nil {
 		return f.rawCfg
@@ -108,6 +113,31 @@ func (f *fakeMutatorState) KillAgent(name string) error       { f.killed[name] =
 func (f *fakeMutatorState) DrainAgent(name string) error      { f.drained[name] = true; return nil }
 func (f *fakeMutatorState) UndrainAgent(name string) error    { delete(f.drained, name); return nil }
 func (f *fakeMutatorState) NudgeAgent(name, msg string) error { f.nudges[name] = msg; return nil }
+func (f *fakeMutatorState) EnableAutomation(name, rig string) error {
+	enabled := true
+	return f.SetAutomationOverrideEnabled(name, rig, &enabled)
+}
+
+func (f *fakeMutatorState) DisableAutomation(name, rig string) error {
+	enabled := false
+	return f.SetAutomationOverrideEnabled(name, rig, &enabled)
+}
+
+func (f *fakeMutatorState) SetAutomationOverrideEnabled(name, rig string, enabled *bool) error {
+	for i := range f.cfg.Automations.Overrides {
+		if f.cfg.Automations.Overrides[i].Name == name && f.cfg.Automations.Overrides[i].Rig == rig {
+			f.cfg.Automations.Overrides[i].Enabled = enabled
+			return nil
+		}
+	}
+	f.cfg.Automations.Overrides = append(f.cfg.Automations.Overrides, config.AutomationOverride{
+		Name:    name,
+		Rig:     rig,
+		Enabled: enabled,
+	})
+	return nil
+}
+
 func (f *fakeMutatorState) SuspendRig(name string) error {
 	cfg := f.Config()
 	found := false

@@ -23,7 +23,7 @@ import (
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/fsys"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/gastownhall/gascity/internal/telemetry"
 )
 
@@ -207,7 +207,7 @@ func tryReloadConfig(tomlPath, lockedCityName, cityRoot string, stderr io.Writer
 //  3. Stop (force-kill) any survivors
 func gracefulStopAll(
 	names []string,
-	sp session.Provider,
+	sp runtime.Provider,
 	timeout time.Duration,
 	rec events.Recorder,
 	stdout, stderr io.Writer,
@@ -289,8 +289,8 @@ func controllerLoop(
 	cityName string,
 	tomlPath string,
 	watchDirs []string,
-	buildFn func(*config.City, session.Provider) []agent.Agent,
-	sp session.Provider,
+	buildFn func(*config.City, runtime.Provider) []agent.Agent,
+	sp runtime.Provider,
 	rops reconcileOps,
 	dops drainOps,
 	ct crashTracker,
@@ -381,8 +381,8 @@ func runController(
 	cityPath string,
 	tomlPath string,
 	cfg *config.City,
-	buildFn func(*config.City, session.Provider) []agent.Agent,
-	sp session.Provider,
+	buildFn func(*config.City, runtime.Provider) []agent.Agent,
+	sp runtime.Provider,
 	dops drainOps,
 	poolSessions map[string]time.Duration,
 	poolDeathHandlers map[string]poolDeathInfo,

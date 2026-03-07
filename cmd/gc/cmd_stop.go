@@ -11,7 +11,7 @@ import (
 
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/events"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/spf13/cobra"
 )
 
@@ -142,7 +142,7 @@ func tryStopController(cityPath string, stdout io.Writer) bool {
 // doStop is the pure logic for "gc stop". It collects running agents and
 // performs graceful shutdown (interrupt → wait → kill). Accepts pre-built
 // agents, provider, timeout, and recorder for testability.
-func doStop(agents []agent.Handle, sp session.Provider, timeout time.Duration,
+func doStop(agents []agent.Handle, sp runtime.Provider, timeout time.Duration,
 	rec events.Recorder, stdout, stderr io.Writer,
 ) int {
 	var names []string

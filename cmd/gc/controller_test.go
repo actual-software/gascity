@@ -13,15 +13,15 @@ import (
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 func TestControllerLoopCancel(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := agent.New("mayor", "test", "echo hello", "", nil, agent.StartupHints{}, "", "", nil, sp)
 
 	var reconcileCount atomic.Int32
-	buildFn := func(_ *config.City, _ session.Provider) []agent.Agent {
+	buildFn := func(_ *config.City, _ runtime.Provider) []agent.Agent {
 		reconcileCount.Add(1)
 		return []agent.Agent{a}
 	}
@@ -50,11 +50,11 @@ func TestControllerLoopCancel(t *testing.T) {
 }
 
 func TestControllerLoopTick(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	a := agent.New("mayor", "test", "echo hello", "", nil, agent.StartupHints{}, "", "", nil, sp)
 
 	var reconcileCount atomic.Int32
-	buildFn := func(_ *config.City, _ session.Provider) []agent.Agent {
+	buildFn := func(_ *config.City, _ runtime.Provider) []agent.Agent {
 		reconcileCount.Add(1)
 		return []agent.Agent{a}
 	}
@@ -101,12 +101,12 @@ func TestControllerLockExclusion(t *testing.T) {
 }
 
 func TestControllerShutdown(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// Pre-start an agent to verify shutdown stops it.
-	_ = sp.Start(context.Background(), "mayor", session.Config{Command: "echo hello"})
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{Command: "echo hello"})
 	a := agent.New("mayor", "test", "echo hello", "", nil, agent.StartupHints{}, "", "", nil, sp)
 
-	buildFn := func(_ *config.City, _ session.Provider) []agent.Agent {
+	buildFn := func(_ *config.City, _ runtime.Provider) []agent.Agent {
 		return []agent.Agent{a}
 	}
 
@@ -180,12 +180,12 @@ func TestControllerReloadsConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 
 	// buildFn creates agents from the config it receives.
 	var lastAgentNames atomic.Value
 	var reconcileCount atomic.Int32
-	buildFn := func(c *config.City, _ session.Provider) []agent.Agent {
+	buildFn := func(c *config.City, _ runtime.Provider) []agent.Agent {
 		reconcileCount.Add(1)
 		var names []string
 		var agents []agent.Agent
@@ -249,9 +249,9 @@ func TestControllerReloadInvalidConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	var reconcileCount atomic.Int32
-	buildFn := func(c *config.City, _ session.Provider) []agent.Agent {
+	buildFn := func(c *config.City, _ runtime.Provider) []agent.Agent {
 		reconcileCount.Add(1)
 		var agents []agent.Agent
 		for _, a := range c.Agents {
@@ -312,9 +312,9 @@ func TestControllerReloadCityNameChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	var reconcileCount atomic.Int32
-	buildFn := func(c *config.City, _ session.Provider) []agent.Agent {
+	buildFn := func(c *config.City, _ runtime.Provider) []agent.Agent {
 		reconcileCount.Add(1)
 		var agents []agent.Agent
 		for _, a := range c.Agents {

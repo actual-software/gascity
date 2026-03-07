@@ -13,8 +13,8 @@ import (
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/hooks"
-	"github.com/gastownhall/gascity/internal/session"
-	sessionauto "github.com/gastownhall/gascity/internal/session/auto"
+	"github.com/gastownhall/gascity/internal/runtime"
+	sessionauto "github.com/gastownhall/gascity/internal/runtime/auto"
 )
 
 // agentBuildParams holds shared, per-city parameters for building agents.
@@ -26,7 +26,7 @@ type agentBuildParams struct {
 	providers       map[string]config.ProviderSpec
 	lookPath        config.LookPathFunc
 	fs              fsys.FS
-	sp              session.Provider
+	sp              runtime.Provider
 	rigs            []config.Rig
 	sessionTemplate string
 	beaconTime      time.Time
@@ -81,16 +81,16 @@ func buildOneAgent(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName st
 	overlayDir := resolveOverlayDir(cfgAgent.OverlayDir, p.cityPath)
 
 	// Build copy_files for container providers.
-	var copyFiles []session.CopyEntry
+	var copyFiles []runtime.CopyEntry
 	command := resolved.CommandString()
 	if sa := settingsArgs(p.cityPath, resolved.Name); sa != "" {
 		command = command + " " + sa
 		settingsFile := filepath.Join(p.cityPath, ".gc", "settings.json")
-		copyFiles = append(copyFiles, session.CopyEntry{Src: settingsFile, RelDst: filepath.Join(".gc", "settings.json")})
+		copyFiles = append(copyFiles, runtime.CopyEntry{Src: settingsFile, RelDst: filepath.Join(".gc", "settings.json")})
 	}
 	scriptsDir := filepath.Join(p.cityPath, ".gc", "scripts")
 	if info, sErr := os.Stat(scriptsDir); sErr == nil && info.IsDir() {
-		copyFiles = append(copyFiles, session.CopyEntry{Src: scriptsDir, RelDst: filepath.Join(".gc", "scripts")})
+		copyFiles = append(copyFiles, runtime.CopyEntry{Src: scriptsDir, RelDst: filepath.Join(".gc", "scripts")})
 	}
 	copyFiles = stageHookFiles(copyFiles, p.cityPath, workDir)
 
@@ -124,7 +124,7 @@ func buildOneAgent(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName st
 			Env:           cfgAgent.Env,
 		}, p.sessionTemplate, p.stderr, p.packDirs, fragments)
 		hasHooks := config.AgentHasHooks(cfgAgent, p.workspace, resolved.Name)
-		beacon := session.FormatBeaconAt(p.cityName, qualifiedName, !hasHooks, p.beaconTime)
+		beacon := runtime.FormatBeaconAt(p.cityName, qualifiedName, !hasHooks, p.beaconTime)
 		if prompt != "" {
 			prompt = beacon + "\n\n" + prompt
 		} else {
@@ -186,7 +186,7 @@ func buildOneAgent(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName st
 }
 
 // newAgentBuildParams constructs agentBuildParams from the common startup values.
-func newAgentBuildParams(cityName, cityPath string, cfg *config.City, sp session.Provider, beaconTime time.Time, stderr io.Writer) *agentBuildParams {
+func newAgentBuildParams(cityName, cityPath string, cfg *config.City, sp runtime.Provider, beaconTime time.Time, stderr io.Writer) *agentBuildParams {
 	return &agentBuildParams{
 		cityName:        cityName,
 		cityPath:        cityPath,

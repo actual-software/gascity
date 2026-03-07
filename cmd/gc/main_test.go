@@ -14,7 +14,7 @@ import (
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/fsys"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/rogpeppe/go-internal/testscript"
 )
 
@@ -1315,8 +1315,8 @@ func TestInitFromSkip(t *testing.T) {
 // --- gc stop (doStop with agent.Fake) ---
 
 func TestDoStopOneAgentRunning(t *testing.T) {
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	f := agent.NewFake("mayor", "mayor")
 	f.Running = true
 
@@ -1338,7 +1338,7 @@ func TestDoStopOneAgentRunning(t *testing.T) {
 }
 
 func TestDoStopNoAgents(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	var stdout, stderr bytes.Buffer
 	code := doStop(nil, sp, 0, events.Discard, &stdout, &stderr)
 	if code != 0 {
@@ -1355,7 +1355,7 @@ func TestDoStopNoAgents(t *testing.T) {
 }
 
 func TestDoStopAgentNotRunning(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	f := agent.NewFake("mayor", "mayor")
 	// Running defaults to false — agent is not running.
 
@@ -1375,9 +1375,9 @@ func TestDoStopAgentNotRunning(t *testing.T) {
 }
 
 func TestDoStopMultipleAgents(t *testing.T) {
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
-	_ = sp.Start(context.Background(), "worker", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
+	_ = sp.Start(context.Background(), "worker", runtime.Config{})
 	mayor := agent.NewFake("mayor", "mayor")
 	mayor.Running = true
 	worker := agent.NewFake("worker", "worker")
@@ -1401,7 +1401,7 @@ func TestDoStopMultipleAgents(t *testing.T) {
 }
 
 func TestDoStopStopError(t *testing.T) {
-	sp := session.NewFailFake() // Stop will fail
+	sp := runtime.NewFailFake() // Stop will fail
 	f := agent.NewFake("mayor", "mayor")
 	f.Running = true
 

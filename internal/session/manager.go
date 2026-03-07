@@ -1,0 +1,502 @@
+// Package session manages persistent, resumable chat sessions.
+//
+// A chat session is a conversation between a human and an agent template
+// that can be started, suspended (freeing runtime resources), and resumed
+// later. Sessions are backed by beads (type "session") for persistence
+// and use runtime.Provider for runtime management.
+package session
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/gastownhall/gascity/internal/beads"
+	"github.com/gastownhall/gascity/internal/runtime"
+)
+
+// State represents the runtime state of a chat session.
+type State string
+
+const (
+	// StateActive means the conversation has a live runtime session.
+	StateActive State = "active"
+	// StateSuspended means the conversation is paused with no runtime resources.
+	StateSuspended State = "suspended"
+)
+
+// BeadType is the bead type for chat sessions.
+const BeadType = "session"
+
+// LabelSession is the label applied to all session beads for filtering.
+const LabelSession = "gc:session"
+
+// Info holds the user-facing details of a chat session.
+type Info struct {
+	ID          string
+	Template    string
+	State       State
+	Title       string
+	Provider    string
+	Command     string // resolved command stored at creation
+	WorkDir     string
+	SessionName string // tmux session name
+	SessionKey  string // provider-specific resume handle (UUID)
+	ResumeFlag  string // stored provider resume flag (e.g., "--resume")
+	ResumeStyle string // "flag" or "subcommand"
+	CreatedAt   time.Time
+	LastActive  time.Time
+	Attached    bool
+}
+
+// ProviderResume describes a provider's session resume capabilities.
+// Populated from config.ResolvedProvider's resume fields.
+type ProviderResume struct {
+	// ResumeFlag is the CLI flag for resuming (e.g., "--resume").
+	// Empty means the provider doesn't support resume.
+	ResumeFlag string
+	// ResumeStyle is "flag" (--resume <key>) or "subcommand" (command resume <key>).
+	ResumeStyle string
+	// SessionIDFlag is the CLI flag for creating with a specific ID (e.g., "--session-id").
+	// Enables Generate & Pass strategy.
+	SessionIDFlag string
+}
+
+// Manager orchestrates chat session lifecycle using beads for persistence
+// and runtime.Provider for runtime.
+type Manager struct {
+	store beads.Store
+	sp    runtime.Provider
+}
+
+// NewManager creates a Manager backed by the given bead store and session provider.
+func NewManager(store beads.Store, sp runtime.Provider) *Manager {
+	return &Manager{store: store, sp: sp}
+}
+
+// Create creates a new chat session bead and starts the runtime session.
+// The command is the full provider command to execute (e.g., "claude --dangerously-skip-permissions").
+// The resume parameter carries provider resume capabilities; if the provider
+// supports SessionIDFlag, a UUID session key is generated and injected.
+// The caller is responsible for attaching after Create returns.
+func (m *Manager) Create(ctx context.Context, template, title, command, workDir, provider string, env map[string]string, resume ProviderResume, hints runtime.Config) (Info, error) {
+	// Generate session key only when the provider supports Generate & Pass
+	// (has SessionIDFlag). Otherwise the key would never be passed to the
+	// provider and BuildResumeCommand would produce invalid resume commands.
+	var sessionKey string
+	if resume.SessionIDFlag != "" {
+		var err error
+		sessionKey, err = generateSessionKey()
+		if err != nil {
+			return Info{}, fmt.Errorf("generating session key: %w", err)
+		}
+	}
+
+	// Create the bead first to get the ID.
+	meta := map[string]string{
+		"template":     template,
+		"state":        string(StateActive),
+		"provider":     provider,
+		"work_dir":     workDir,
+		"command":      command,
+		"resume_flag":  resume.ResumeFlag,
+		"resume_style": resume.ResumeStyle,
+	}
+	if sessionKey != "" {
+		meta["session_key"] = sessionKey
+	}
+	b, err := m.store.Create(beads.Bead{
+		Title: title,
+		Type:  BeadType,
+		Labels: []string{
+			LabelSession,
+			"template:" + template,
+		},
+		Metadata: meta,
+	})
+	if err != nil {
+		return Info{}, fmt.Errorf("creating session bead: %w", err)
+	}
+
+	// Derive the tmux session name from the bead ID.
+	sessName := sessionNameFor(b.ID)
+
+	// Store the session name in metadata.
+	if err := m.store.SetMetadata(b.ID, "session_name", sessName); err != nil {
+		_ = m.store.Close(b.ID)
+		return Info{}, fmt.Errorf("storing session name: %w", err)
+	}
+
+	// If the provider supports Generate & Pass, inject --session-id into command.
+	startCommand := command
+	if resume.SessionIDFlag != "" && sessionKey != "" {
+		startCommand = command + " " + resume.SessionIDFlag + " " + sessionKey
+	}
+
+	// Build the session config from the hints, overriding command/workdir/env.
+	cfg := hints
+	cfg.Command = startCommand
+	cfg.WorkDir = workDir
+	cfg.Env = mergeEnv(cfg.Env, env)
+
+	// Start the runtime session.
+	if err := m.sp.Start(ctx, sessName, cfg); err != nil {
+		// Clean up the bead on start failure.
+		_ = m.store.Close(b.ID)
+		return Info{}, fmt.Errorf("starting session: %w", err)
+	}
+
+	return m.infoFromBead(b), nil
+}
+
+// Attach attaches the user's terminal to the session. If the session is
+// suspended, it is resumed first using resumeCommand. If the tmux session
+// died (active bead but no process), it is restarted.
+func (m *Manager) Attach(ctx context.Context, id string, resumeCommand string, hints runtime.Config) error {
+	b, err := m.store.Get(id)
+	if err != nil {
+		return fmt.Errorf("getting session: %w", err)
+	}
+	if b.Type != BeadType {
+		return fmt.Errorf("bead %s is not a session (type=%q)", id, b.Type)
+	}
+	if b.Status == "closed" {
+		return fmt.Errorf("session %s is closed", id)
+	}
+
+	sessName := b.Metadata["session_name"]
+	if sessName == "" {
+		sessName = sessionNameFor(id)
+	}
+
+	state := State(b.Metadata["state"])
+
+	// If suspended or tmux session is dead, (re)start.
+	if state == StateSuspended || !m.sp.IsRunning(sessName) {
+		cmd := resumeCommand
+		if cmd == "" {
+			// Fallback: use no resume (fresh start). Caller should provide
+			// the resume command for conversation continuity.
+			return fmt.Errorf("session %s is suspended and no resume command provided", id)
+		}
+
+		cfg := hints
+		cfg.Command = cmd
+		cfg.WorkDir = b.Metadata["work_dir"]
+
+		if err := m.sp.Start(ctx, sessName, cfg); err != nil {
+			return fmt.Errorf("resuming session: %w", err)
+		}
+		if err := m.store.SetMetadata(id, "state", string(StateActive)); err != nil {
+			_ = m.sp.Stop(sessName) // clean up orphan runtime
+			return fmt.Errorf("updating session state: %w", err)
+		}
+	}
+
+	return m.sp.Attach(sessName)
+}
+
+// Suspend saves session state and kills the runtime session.
+func (m *Manager) Suspend(id string) error {
+	b, err := m.store.Get(id)
+	if err != nil {
+		return fmt.Errorf("getting session: %w", err)
+	}
+	if b.Type != BeadType {
+		return fmt.Errorf("bead %s is not a session (type=%q)", id, b.Type)
+	}
+	if b.Status == "closed" {
+		return fmt.Errorf("session %s is closed", id)
+	}
+	if State(b.Metadata["state"]) == StateSuspended {
+		return nil // already suspended
+	}
+
+	sessName := b.Metadata["session_name"]
+	if sessName == "" {
+		sessName = sessionNameFor(id)
+	}
+
+	// Kill the runtime session (skip if already dead).
+	if m.sp.IsRunning(sessName) {
+		if err := m.sp.Stop(sessName); err != nil {
+			return fmt.Errorf("stopping runtime session: %w", err)
+		}
+	}
+
+	// Update state and record suspension timestamp.
+	if err := m.store.SetMetadata(id, "state", string(StateSuspended)); err != nil {
+		return fmt.Errorf("updating session state: %w", err)
+	}
+	if err := m.store.SetMetadata(id, "suspended_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("storing suspension timestamp: %w", err)
+	}
+
+	return nil
+}
+
+// Close ends a conversation permanently.
+func (m *Manager) Close(id string) error {
+	b, err := m.store.Get(id)
+	if err != nil {
+		return fmt.Errorf("getting session: %w", err)
+	}
+	if b.Type != BeadType {
+		return fmt.Errorf("bead %s is not a session (type=%q)", id, b.Type)
+	}
+	if b.Status == "closed" {
+		return nil // already closed
+	}
+
+	// If active, kill the runtime session.
+	if State(b.Metadata["state"]) == StateActive {
+		sessName := b.Metadata["session_name"]
+		if sessName == "" {
+			sessName = sessionNameFor(id)
+		}
+		_ = m.sp.Stop(sessName) // best-effort
+	}
+
+	return m.store.Close(id)
+}
+
+// Rename updates the title of a chat session.
+func (m *Manager) Rename(id, title string) error {
+	b, err := m.store.Get(id)
+	if err != nil {
+		return fmt.Errorf("getting session: %w", err)
+	}
+	if b.Type != BeadType {
+		return fmt.Errorf("bead %s is not a session (type=%q)", id, b.Type)
+	}
+	return m.store.Update(id, beads.UpdateOpts{Title: &title})
+}
+
+// Prune closes suspended sessions whose suspension time is before the given
+// cutoff. Active and already-closed sessions are never pruned.
+// Returns the number of sessions pruned.
+func (m *Manager) Prune(before time.Time) (int, error) {
+	all, err := m.store.ListByLabel(LabelSession, 0)
+	if err != nil {
+		return 0, fmt.Errorf("listing sessions: %w", err)
+	}
+	var pruned int
+	for _, b := range all {
+		if b.Type != BeadType {
+			continue
+		}
+		if b.Status == "closed" {
+			continue // already closed
+		}
+		state := State(b.Metadata["state"])
+		if state != StateSuspended {
+			continue // only prune suspended sessions
+		}
+		// Use suspended_at timestamp if available, fall back to CreatedAt
+		// for beads created before suspended_at was introduced.
+		ts := b.CreatedAt
+		if raw := b.Metadata["suspended_at"]; raw != "" {
+			if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
+				ts = parsed
+			}
+		}
+		if !ts.Before(before) {
+			continue
+		}
+		if err := m.store.Close(b.ID); err != nil {
+			return pruned, fmt.Errorf("closing session %s: %w", b.ID, err)
+		}
+		pruned++
+	}
+	return pruned, nil
+}
+
+// Get returns info about a single session.
+func (m *Manager) Get(id string) (Info, error) {
+	b, err := m.store.Get(id)
+	if err != nil {
+		return Info{}, err
+	}
+	if b.Type != BeadType {
+		return Info{}, fmt.Errorf("bead %s is not a session (type=%q)", id, b.Type)
+	}
+	return m.infoFromBead(b), nil
+}
+
+// List returns all chat sessions, optionally filtered by state and template.
+func (m *Manager) List(stateFilter string, templateFilter string) ([]Info, error) {
+	all, err := m.store.ListByLabel(LabelSession, 0)
+	if err != nil {
+		return nil, fmt.Errorf("listing sessions: %w", err)
+	}
+
+	var result []Info
+	for _, b := range all {
+		if b.Type != BeadType {
+			continue
+		}
+		state := State(b.Metadata["state"])
+
+		// Filter by state.
+		if stateFilter != "" && stateFilter != "all" {
+			match := false
+			for _, s := range strings.Split(stateFilter, ",") {
+				switch {
+				case s == "closed" && b.Status == "closed":
+					match = true
+				case s == "open" && b.Status == "open":
+					match = true
+				case b.Status != "closed" && s == string(state):
+					// Only match metadata state for non-closed beads.
+					match = true
+				}
+				if match {
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		} else if stateFilter == "" {
+			// Default: exclude closed sessions.
+			if b.Status == "closed" {
+				continue
+			}
+		}
+
+		// Filter by template.
+		if templateFilter != "" && b.Metadata["template"] != templateFilter {
+			continue
+		}
+
+		result = append(result, m.infoFromBead(b))
+	}
+	return result, nil
+}
+
+// Peek captures the last N lines of output from the session.
+func (m *Manager) Peek(id string, lines int) (string, error) {
+	b, err := m.store.Get(id)
+	if err != nil {
+		return "", err
+	}
+	if b.Type != BeadType {
+		return "", fmt.Errorf("bead %s is not a session", id)
+	}
+	if b.Status == "closed" || State(b.Metadata["state"]) == StateSuspended {
+		return "", errors.New("session is not active")
+	}
+	sessName := b.Metadata["session_name"]
+	if sessName == "" {
+		sessName = sessionNameFor(id)
+	}
+	return m.sp.Peek(sessName, lines)
+}
+
+// infoFromBead converts a bead to an Info struct, enriching with runtime state.
+func (m *Manager) infoFromBead(b beads.Bead) Info {
+	sessName := b.Metadata["session_name"]
+	if sessName == "" {
+		sessName = sessionNameFor(b.ID)
+	}
+
+	state := State(b.Metadata["state"])
+	if b.Status == "closed" {
+		state = "" // closed beads have no runtime state
+	}
+
+	info := Info{
+		ID:          b.ID,
+		Template:    b.Metadata["template"],
+		State:       state,
+		Title:       b.Title,
+		Provider:    b.Metadata["provider"],
+		Command:     b.Metadata["command"],
+		WorkDir:     b.Metadata["work_dir"],
+		SessionName: sessName,
+		SessionKey:  b.Metadata["session_key"],
+		ResumeFlag:  b.Metadata["resume_flag"],
+		ResumeStyle: b.Metadata["resume_style"],
+		CreatedAt:   b.CreatedAt,
+	}
+
+	// Enrich with live runtime state if active.
+	if state == StateActive && m.sp != nil {
+		info.Attached = m.sp.IsAttached(sessName)
+		if t, err := m.sp.GetLastActivity(sessName); err == nil && !t.IsZero() {
+			info.LastActive = t
+		}
+	}
+
+	return info
+}
+
+// sessionNameFor derives the tmux session name from a bead ID.
+// Uses the "s-" prefix to avoid collision with agent sessions.
+func sessionNameFor(beadID string) string {
+	return "s-" + strings.ReplaceAll(beadID, "/", "--")
+}
+
+// BuildResumeCommand constructs the resume command from stored session info.
+// If the provider supports resume (has ResumeFlag), it builds the appropriate
+// resume command using the session key. Otherwise returns the stored command
+// for a fresh start.
+func BuildResumeCommand(info Info) string {
+	if info.ResumeFlag == "" || info.SessionKey == "" {
+		// Provider doesn't support resume or no key — use stored command.
+		cmd := info.Command
+		if cmd == "" {
+			cmd = info.Provider
+		}
+		return cmd
+	}
+
+	// Build resume command based on style.
+	cmd := info.Command
+	if cmd == "" {
+		cmd = info.Provider
+	}
+	switch info.ResumeStyle {
+	case "subcommand":
+		// Insert subcommand after the binary name:
+		//   "codex --model o3" → "codex resume <key> --model o3"
+		parts := strings.SplitN(cmd, " ", 2)
+		if len(parts) == 2 {
+			return parts[0] + " " + info.ResumeFlag + " " + info.SessionKey + " " + parts[1]
+		}
+		return cmd + " " + info.ResumeFlag + " " + info.SessionKey
+	default: // "flag"
+		// command --resume <key> (e.g., claude --resume <uuid>)
+		return cmd + " " + info.ResumeFlag + " " + info.SessionKey
+	}
+}
+
+// mergeEnv merges two env maps, with override taking precedence.
+func mergeEnv(base, override map[string]string) map[string]string {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	merged := make(map[string]string, len(base)+len(override))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range override {
+		merged[k] = v
+	}
+	return merged
+}
+
+// generateSessionKey creates a random UUID v4 for session identification.
+func generateSessionKey() (string, error) {
+	var uuid [16]byte
+	if _, err := rand.Read(uuid[:]); err != nil {
+		return "", fmt.Errorf("reading random bytes: %w", err)
+	}
+	uuid[6] = (uuid[6] & 0x0f) | 0x40 // version 4
+	uuid[8] = (uuid[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16]), nil
+}

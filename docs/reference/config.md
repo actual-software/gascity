@@ -26,6 +26,7 @@ City is the top-level configuration for a Gas City instance.
 | `daemon` | DaemonConfig |  |  | Daemon configures controller daemon settings. |
 | `automations` | AutomationsConfig |  |  | Automations configures automation settings (skip list). |
 | `api` | APIConfig |  |  | API configures the optional HTTP API server. |
+| `chat_sessions` | ChatSessionsConfig |  |  | ChatSessions configures chat session behavior (auto-suspend). |
 
 ## ACPSessionConfig
 
@@ -193,6 +194,14 @@ BeadsConfig holds bead store settings.
 |-------|------|----------|---------|-------------|
 | `provider` | string |  | `bd` | Provider selects the bead store backend: "bd" (default), "file", or "exec:<script>" for a user-supplied script. |
 
+## ChatSessionsConfig
+
+ChatSessionsConfig configures chat session behavior.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `idle_timeout` | string |  |  | IdleTimeout is the duration after which a detached chat session is auto-suspended. Duration string (e.g., "30m", "1h"). 0 = disabled. |
+
 ## DaemonConfig
 
 DaemonConfig holds controller daemon settings.
@@ -338,6 +347,9 @@ ProviderSpec defines a named provider's startup parameters.
 | `supports_acp` | boolean |  |  | SupportsACP indicates the binary speaks the Agent Client Protocol (JSON-RPC 2.0 over stdio). When an agent sets session = "acp", its resolved provider must have SupportsACP = true. |
 | `supports_hooks` | boolean |  |  | SupportsHooks indicates the provider has an executable hook mechanism (settings.json, plugins, etc.) for lifecycle events. |
 | `instructions_file` | string |  |  | InstructionsFile is the filename the provider reads for project instructions (e.g., "CLAUDE.md", "AGENTS.md"). Empty defaults to "AGENTS.md". |
+| `resume_flag` | string |  |  | ResumeFlag is the CLI flag for resuming a session by ID. Empty means the provider does not support resume. Examples: "--resume" (claude), "resume" (codex) |
+| `resume_style` | string |  |  | ResumeStyle controls how ResumeFlag is applied:   "flag"       → command --resume <key>              (default)   "subcommand" → command resume <key> |
+| `session_id_flag` | string |  |  | SessionIDFlag is the CLI flag for creating a session with a specific ID. Enables the Generate & Pass strategy for session key management. Example: "--session-id" (claude) |
 
 ## Rig
 

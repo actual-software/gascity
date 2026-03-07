@@ -40,6 +40,9 @@ func ValidateDurations(cfg *City, source string) []string {
 	// Automations config durations.
 	check("[automations]", "max_timeout", cfg.Automations.MaxTimeout)
 
+	// Chat sessions config durations.
+	check("[chat_sessions]", "idle_timeout", cfg.ChatSessions.IdleTimeout)
+
 	// Per-agent durations.
 	for _, a := range cfg.Agents {
 		ctx := fmt.Sprintf("agent %q", a.QualifiedName())

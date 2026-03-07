@@ -121,6 +121,50 @@ func TestMailCount(t *testing.T) {
 	}
 }
 
+func TestMailDelete(t *testing.T) {
+	state := newFakeState(t)
+	mp := state.mailProvs["myrig"]
+	msg, _ := mp.Send("mayor", "worker", "To delete", "content")
+	srv := New(state)
+
+	req := httptest.NewRequest("DELETE", "/v0/mail/"+msg.ID, nil)
+	req.Header.Set("X-GC-Request", "true")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	// After delete (soft delete/archive), message should no longer appear in inbox.
+	req = httptest.NewRequest("GET", "/v0/mail?agent=worker", nil)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	var inbox struct {
+		Items []mail.Message `json:"items"`
+		Total int            `json:"total"`
+	}
+	json.NewDecoder(rec.Body).Decode(&inbox) //nolint:errcheck
+	if inbox.Total != 0 {
+		t.Errorf("inbox after delete: Total = %d, want 0", inbox.Total)
+	}
+}
+
+func TestMailDeleteNotFound(t *testing.T) {
+	state := newFakeState(t)
+	srv := New(state)
+
+	req := httptest.NewRequest("DELETE", "/v0/mail/nonexistent", nil)
+	req.Header.Set("X-GC-Request", "true")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
 func TestMailReply(t *testing.T) {
 	state := newFakeState(t)
 	mp := state.mailProvs["myrig"]

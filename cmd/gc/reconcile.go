@@ -9,12 +9,12 @@ import (
 
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/events"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/gastownhall/gascity/internal/telemetry"
 )
 
 // reconcileOps provides session-level operations needed by declarative
-// reconciliation. Separate from session.Provider to avoid bloating the
+// reconciliation. Separate from runtime.Provider to avoid bloating the
 // core 4-method interface with operations only reconciliation needs.
 type reconcileOps interface {
 	// listRunning returns all session names that match the given prefix.
@@ -36,12 +36,12 @@ type reconcileOps interface {
 	liveHash(name string) (string, error)
 
 	// runLive re-applies session_live commands to a running session.
-	runLive(name string, cfg session.Config) error
+	runLive(name string, cfg runtime.Config) error
 }
 
-// providerReconcileOps implements reconcileOps using session.Provider metadata.
+// providerReconcileOps implements reconcileOps using runtime.Provider metadata.
 type providerReconcileOps struct {
-	sp session.Provider
+	sp runtime.Provider
 }
 
 func (o *providerReconcileOps) listRunning(prefix string) ([]string, error) {
@@ -73,12 +73,12 @@ func (o *providerReconcileOps) liveHash(name string) (string, error) {
 	return val, nil
 }
 
-func (o *providerReconcileOps) runLive(name string, cfg session.Config) error {
+func (o *providerReconcileOps) runLive(name string, cfg runtime.Config) error {
 	return o.sp.RunLive(name, cfg)
 }
 
-// newReconcileOps creates a reconcileOps from a session.Provider.
-func newReconcileOps(sp session.Provider) reconcileOps {
+// newReconcileOps creates a reconcileOps from a runtime.Provider.
+func newReconcileOps(sp runtime.Provider) reconcileOps {
 	return &providerReconcileOps{sp: sp}
 }
 
@@ -93,7 +93,7 @@ func newReconcileOps(sp session.Provider) reconcileOps {
 // If rops is nil, reconciliation degrades gracefully to the simpler
 // start-if-not-running behavior (no drift detection, no orphan cleanup).
 func doReconcileAgents(agents []agent.Agent,
-	sp session.Provider, rops reconcileOps, dops drainOps,
+	sp runtime.Provider, rops reconcileOps, dops drainOps,
 	ct crashTracker, it idleTracker,
 	rec events.Recorder,
 	poolSessions map[string]time.Duration,
@@ -235,8 +235,8 @@ func doReconcileAgents(agents []agent.Agent,
 				}
 				if rops != nil {
 					cfg := a.SessionConfig()
-					_ = rops.storeConfigHash(a.SessionName(), session.CoreFingerprint(cfg))
-					_ = rops.storeLiveHash(a.SessionName(), session.LiveFingerprint(cfg))
+					_ = rops.storeConfigHash(a.SessionName(), runtime.CoreFingerprint(cfg))
+					_ = rops.storeLiveHash(a.SessionName(), runtime.LiveFingerprint(cfg))
 				}
 				continue
 			}
@@ -272,8 +272,8 @@ func doReconcileAgents(agents []agent.Agent,
 			}
 			if rops != nil {
 				cfg := a.SessionConfig()
-				_ = rops.storeConfigHash(a.SessionName(), session.CoreFingerprint(cfg)) // best-effort
-				_ = rops.storeLiveHash(a.SessionName(), session.LiveFingerprint(cfg))
+				_ = rops.storeConfigHash(a.SessionName(), runtime.CoreFingerprint(cfg)) // best-effort
+				_ = rops.storeLiveHash(a.SessionName(), runtime.LiveFingerprint(cfg))
 			}
 			continue
 		}
@@ -312,8 +312,8 @@ func doReconcileAgents(agents []agent.Agent,
 					}
 					if rops != nil {
 						cfg := a.SessionConfig()
-						_ = rops.storeConfigHash(a.SessionName(), session.CoreFingerprint(cfg))
-						_ = rops.storeLiveHash(a.SessionName(), session.LiveFingerprint(cfg))
+						_ = rops.storeConfigHash(a.SessionName(), runtime.CoreFingerprint(cfg))
+						_ = rops.storeLiveHash(a.SessionName(), runtime.LiveFingerprint(cfg))
 					}
 				}
 				continue // skip normal drift check — already handling it
@@ -332,7 +332,7 @@ func doReconcileAgents(agents []agent.Agent,
 		}
 
 		cfg := a.SessionConfig()
-		currentCore := session.CoreFingerprint(cfg)
+		currentCore := runtime.CoreFingerprint(cfg)
 		if storedCore != currentCore {
 			// Core drift → drain + restart (existing behavior).
 			if dops != nil {
@@ -364,7 +364,7 @@ func doReconcileAgents(agents []agent.Agent,
 					Subject: a.Name(),
 				})
 				_ = rops.storeConfigHash(a.SessionName(), currentCore)
-				_ = rops.storeLiveHash(a.SessionName(), session.LiveFingerprint(cfg))
+				_ = rops.storeLiveHash(a.SessionName(), runtime.LiveFingerprint(cfg))
 			}
 			continue
 		}
@@ -374,7 +374,7 @@ func doReconcileAgents(agents []agent.Agent,
 		if storedLive == "" {
 			continue // No stored live hash — graceful upgrade, don't re-apply.
 		}
-		currentLive := session.LiveFingerprint(cfg)
+		currentLive := runtime.LiveFingerprint(cfg)
 		if storedLive != currentLive {
 			// Live-only drift → re-apply session_live without restart.
 			fmt.Fprintf(stdout, "Live config changed for '%s', re-applying...\n", a.Name()) //nolint:errcheck // best-effort stdout
@@ -452,8 +452,8 @@ func doReconcileAgents(agents []agent.Agent,
 		// Store config hashes after successful start.
 		if rops != nil {
 			cfg := r.agent.SessionConfig()
-			_ = rops.storeConfigHash(r.agent.SessionName(), session.CoreFingerprint(cfg)) // best-effort
-			_ = rops.storeLiveHash(r.agent.SessionName(), session.LiveFingerprint(cfg))
+			_ = rops.storeConfigHash(r.agent.SessionName(), runtime.CoreFingerprint(cfg)) // best-effort
+			_ = rops.storeLiveHash(r.agent.SessionName(), runtime.LiveFingerprint(cfg))
 		}
 	}
 
@@ -540,7 +540,7 @@ func doReconcileAgents(agents []agent.Agent,
 // to clean up orphans after stopping config agents. With per-city socket
 // isolation, all sessions on the socket belong to this city.
 // Uses gracefulStopAll for two-pass shutdown.
-func doStopOrphans(sp session.Provider, rops reconcileOps, desired map[string]bool,
+func doStopOrphans(sp runtime.Provider, rops reconcileOps, desired map[string]bool,
 	timeout time.Duration, rec events.Recorder, stdout, stderr io.Writer,
 ) {
 	if rops == nil {

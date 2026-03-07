@@ -9,7 +9,7 @@ import (
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/config"
 	gitpkg "github.com/gastownhall/gascity/internal/git"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 type rigResponse struct {
@@ -88,6 +88,9 @@ func (s *Server) handleRigAction(w http.ResponseWriter, r *http.Request) {
 		err = sm.SuspendRig(name)
 	case "resume":
 		err = sm.ResumeRig(name)
+	case "restart":
+		s.handleRigRestart(w, name, sm)
+		return
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "unknown rig action: "+action)
 		return
@@ -104,8 +107,66 @@ func (s *Server) handleRigAction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "action": action, "rig": name})
 }
 
+// handleRigRestart kills all agents in a rig so the reconciler restarts them.
+func (s *Server) handleRigRestart(w http.ResponseWriter, name string, sm StateMutator) {
+	cfg := s.state.Config()
+
+	// Verify rig exists.
+	rigFound := false
+	for _, rig := range cfg.Rigs {
+		if rig.Name == name {
+			rigFound = true
+			break
+		}
+	}
+	if !rigFound {
+		writeError(w, http.StatusNotFound, "not_found", "rig "+name+" not found")
+		return
+	}
+
+	// Best-effort kill: the agent set may change between config read and each
+	// KillAgent call (pool scaling, config reload). The reconciler is the
+	// convergence mechanism — survivors will be caught on its next tick.
+	killed := make([]string, 0)
+	failed := make([]string, 0)
+	for _, a := range cfg.Agents {
+		if a.Dir != name {
+			continue
+		}
+		expanded := expandAgent(a, s.state.CityName(), cfg.Workspace.SessionTemplate, s.state.SessionProvider())
+		for _, ea := range expanded {
+			if err := sm.KillAgent(ea.qualifiedName); err != nil {
+				// "not found" / "not running" are benign — agent wasn't running.
+				if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "not running") {
+					failed = append(failed, ea.qualifiedName)
+				}
+			} else {
+				killed = append(killed, ea.qualifiedName)
+			}
+		}
+	}
+	resp := map[string]any{
+		"status": "ok",
+		"action": "restart",
+		"rig":    name,
+		"killed": killed,
+	}
+	httpStatus := http.StatusOK
+	if len(failed) > 0 {
+		resp["failed"] = failed
+		if len(killed) == 0 {
+			// Total failure — no agents were killed.
+			resp["status"] = "failed"
+			httpStatus = http.StatusInternalServerError
+		} else {
+			resp["status"] = "partial"
+		}
+	}
+	writeJSON(w, httpStatus, resp)
+}
+
 // buildRigResponse creates a rigResponse with agent counts and last activity.
-func buildRigResponse(cfg *config.City, rig config.Rig, sp session.Provider, cityName string) rigResponse {
+func buildRigResponse(cfg *config.City, rig config.Rig, sp runtime.Provider, cityName string) rigResponse {
 	tmpl := cfg.Workspace.SessionTemplate
 	var agentCount, runningCount int
 	var maxActivity time.Time
@@ -144,7 +205,7 @@ func buildRigResponse(cfg *config.City, rig config.Rig, sp session.Provider, cit
 // rigSuspended computes effective suspended state for a rig by merging config
 // and runtime session metadata. A rig is suspended if the config says so, or
 // if all its agents are runtime-suspended via session metadata.
-func rigSuspended(cfg *config.City, rig config.Rig, sp session.Provider, cityName string) bool {
+func rigSuspended(cfg *config.City, rig config.Rig, sp runtime.Provider, cityName string) bool {
 	if rig.Suspended {
 		return true
 	}

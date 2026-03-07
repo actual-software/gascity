@@ -9,7 +9,7 @@ import (
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/events"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 func TestHandoffSuccess(t *testing.T) {
@@ -144,9 +144,9 @@ func TestHandoffNotInAgentContext(t *testing.T) {
 func TestHandoffRemoteRunning(t *testing.T) {
 	store := beads.NewMemStore()
 	rec := events.NewFake()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// Start the target session.
-	if err := sp.Start(context.Background(), "deacon", session.Config{Command: "echo"}); err != nil {
+	if err := sp.Start(context.Background(), "deacon", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 	target := agent.HandleFor("deacon", "", "", sp)
@@ -199,7 +199,7 @@ func TestHandoffRemoteRunning(t *testing.T) {
 func TestHandoffRemoteNotRunning(t *testing.T) {
 	store := beads.NewMemStore()
 	rec := events.NewFake()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	target := agent.HandleFor("deacon", "", "", sp)
 
 	var stdout, stderr bytes.Buffer

@@ -14,7 +14,7 @@ import (
 
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/config"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 // ScaleCheckRunner runs a scale_check command and returns stdout.
@@ -271,7 +271,7 @@ func poolAgents(bp *agentBuildParams, cfgAgent *config.Agent, desired int) ([]ag
 // For unlimited pools (max < 0), discovers running instances via session provider
 // prefix matching.
 func discoverPoolInstances(agentName, agentDir string, pool config.PoolConfig,
-	cityName, st string, sp session.Provider,
+	cityName, st string, sp runtime.Provider,
 ) []string {
 	if !pool.IsUnlimited() {
 		// Bounded pool: static enumeration.

@@ -12,11 +12,11 @@ import (
 
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/fsys"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 // testBuildParams returns agentBuildParams suitable for unit tests.
-func testBuildParams(sp session.Provider) *agentBuildParams {
+func testBuildParams(sp runtime.Provider) *agentBuildParams {
 	return &agentBuildParams{
 		cityName:  "city",
 		cityPath:  "/tmp/city",
@@ -169,7 +169,7 @@ func TestPoolAgentsUnlimitedNaming(t *testing.T) {
 		StartCommand: "echo hello",
 		Pool:         &config.PoolConfig{Min: 0, Max: -1, Check: "echo 3"},
 	}
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	bp := newAgentBuildParams("city", t.TempDir(), &config.City{}, sp, time.Now(), io.Discard)
 
 	agents, err := poolAgents(bp, cfgAgent, 3)
@@ -189,7 +189,7 @@ func TestPoolAgentsUnlimitedNaming(t *testing.T) {
 }
 
 func TestDiscoverPoolInstancesBounded(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	pool := config.PoolConfig{Min: 0, Max: 3}
 	instances := discoverPoolInstances("worker", "myrig", pool, "city", "", sp)
 	if len(instances) != 3 {
@@ -204,12 +204,12 @@ func TestDiscoverPoolInstancesBounded(t *testing.T) {
 }
 
 func TestDiscoverPoolInstancesUnlimited(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// Start some instances that look like pool members.
-	_ = sp.Start(context.Background(), "myrig--worker-1", session.Config{})
-	_ = sp.Start(context.Background(), "myrig--worker-3", session.Config{})
+	_ = sp.Start(context.Background(), "myrig--worker-1", runtime.Config{})
+	_ = sp.Start(context.Background(), "myrig--worker-3", runtime.Config{})
 	// Start a non-matching session.
-	_ = sp.Start(context.Background(), "myrig--refinery", session.Config{})
+	_ = sp.Start(context.Background(), "myrig--refinery", runtime.Config{})
 
 	pool := config.PoolConfig{Min: 0, Max: -1}
 	instances := discoverPoolInstances("worker", "myrig", pool, "city", "", sp)
@@ -219,9 +219,9 @@ func TestDiscoverPoolInstancesUnlimited(t *testing.T) {
 }
 
 func TestCountRunningPoolInstancesUnlimited(t *testing.T) {
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "worker-1", session.Config{})
-	_ = sp.Start(context.Background(), "worker-3", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "worker-1", runtime.Config{})
+	_ = sp.Start(context.Background(), "worker-3", runtime.Config{})
 
 	count := countRunningPoolInstances("worker", "", config.PoolConfig{Min: 0, Max: -1}, "city", "", sp)
 	if count != 2 {
@@ -235,7 +235,7 @@ func TestPoolAgentsNaming(t *testing.T) {
 		StartCommand: "echo hello",
 		Pool:         &config.PoolConfig{Min: 0, Max: 5, Check: "echo 3"},
 	}
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	agents, err := poolAgents(testBuildParams(sp), cfgAgent, 3)
 	if err != nil {
 		t.Fatalf("poolAgents: %v", err)
@@ -257,7 +257,7 @@ func TestPoolAgentsSessionNames(t *testing.T) {
 		StartCommand: "echo hello",
 		Pool:         &config.PoolConfig{Min: 0, Max: 5, Check: "echo 3"},
 	}
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	agents, err := poolAgents(testBuildParams(sp), cfgAgent, 3)
 	if err != nil {
 		t.Fatalf("poolAgents: %v", err)
@@ -276,7 +276,7 @@ func TestPoolAgentsZeroDesired(t *testing.T) {
 		StartCommand: "echo hello",
 		Pool:         &config.PoolConfig{Min: 0, Max: 5, Check: "echo 0"},
 	}
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	agents, err := poolAgents(testBuildParams(sp), cfgAgent, 0)
 	if err != nil {
 		t.Fatalf("poolAgents: %v", err)
@@ -293,7 +293,7 @@ func TestPoolAgentsEnv(t *testing.T) {
 		Pool:         &config.PoolConfig{Min: 0, Max: 5, Check: "echo 2"},
 		Env:          map[string]string{"POOL_VAR": "yes"},
 	}
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	agents, err := poolAgents(testBuildParams(sp), cfgAgent, 2)
 	if err != nil {
 		t.Fatalf("poolAgents: %v", err)
@@ -323,7 +323,7 @@ func TestPoolAgentsMaxOneNoSuffix(t *testing.T) {
 		StartCommand: "echo hello",
 		Pool:         &config.PoolConfig{Min: 0, Max: 1, Check: "echo 1"},
 	}
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	agents, err := poolAgents(testBuildParams(sp), cfgAgent, 1)
 	if err != nil {
 		t.Fatalf("poolAgents: %v", err)
@@ -452,7 +452,7 @@ func TestPoolAgentsSessionSetup(t *testing.T) {
 		},
 		SessionSetupScript: "scripts/setup.sh",
 	}
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	agents, err := poolAgents(testBuildParams(sp), cfgAgent, 1)
 	if err != nil {
 		t.Fatalf("poolAgents: %v", err)
@@ -506,7 +506,7 @@ func TestPoolAgentsConfigDir(t *testing.T) {
 			"{{.ConfigDir}}/scripts/setup.sh {{.Agent}}",
 		},
 	}
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	agents, err := poolAgents(testBuildParams(sp), cfgAgent, 1)
 	if err != nil {
 		t.Fatalf("poolAgents: %v", err)
@@ -531,7 +531,7 @@ func TestPoolAgentsConfigDir_DefaultsToCityPath(t *testing.T) {
 			"{{.ConfigDir}}/scripts/setup.sh",
 		},
 	}
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	agents, err := poolAgents(testBuildParams(sp), cfgAgent, 1)
 	if err != nil {
 		t.Fatalf("poolAgents: %v", err)
@@ -552,7 +552,7 @@ func TestPoolAgentsOverlayDirCopied(t *testing.T) {
 		Pool:         &config.PoolConfig{Min: 0, Max: 2, Check: "echo 2"},
 		OverlayDir:   "overlays/worker",
 	}
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	agents, err := poolAgents(testBuildParams(sp), cfgAgent, 2)
 	if err != nil {
 		t.Fatalf("poolAgents: %v", err)
@@ -565,11 +565,11 @@ func TestPoolAgentsOverlayDirCopied(t *testing.T) {
 }
 
 func TestCountRunningPoolInstancesUsesListRunning(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// Start 3 out of 5 pool instances.
-	_ = sp.Start(context.Background(), "worker-1", session.Config{})
-	_ = sp.Start(context.Background(), "worker-3", session.Config{})
-	_ = sp.Start(context.Background(), "worker-5", session.Config{})
+	_ = sp.Start(context.Background(), "worker-1", runtime.Config{})
+	_ = sp.Start(context.Background(), "worker-3", runtime.Config{})
+	_ = sp.Start(context.Background(), "worker-5", runtime.Config{})
 
 	count := countRunningPoolInstances("worker", "", config.PoolConfig{Min: 0, Max: 5}, "city", "", sp)
 	if count != 3 {
@@ -578,10 +578,10 @@ func TestCountRunningPoolInstancesUsesListRunning(t *testing.T) {
 }
 
 func TestCountRunningPoolInstancesWithDir(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// Rig-scoped pool: dir/name pattern.
-	_ = sp.Start(context.Background(), "myrig--worker-1", session.Config{})
-	_ = sp.Start(context.Background(), "myrig--worker-2", session.Config{})
+	_ = sp.Start(context.Background(), "myrig--worker-1", runtime.Config{})
+	_ = sp.Start(context.Background(), "myrig--worker-2", runtime.Config{})
 
 	count := countRunningPoolInstances("worker", "myrig", config.PoolConfig{Min: 0, Max: 3}, "city", "", sp)
 	if count != 2 {
@@ -590,7 +590,7 @@ func TestCountRunningPoolInstancesWithDir(t *testing.T) {
 }
 
 func TestCountRunningPoolInstancesNoneRunning(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	count := countRunningPoolInstances("worker", "", config.PoolConfig{Min: 0, Max: 10}, "city", "", sp)
 	if count != 0 {
 		t.Errorf("count = %d, want 0", count)
@@ -794,7 +794,7 @@ func TestComputePoolDeathHandlers(t *testing.T) {
 		},
 	}
 
-	handlers := computePoolDeathHandlers(cfg, "test", t.TempDir(), session.NewFake())
+	handlers := computePoolDeathHandlers(cfg, "test", t.TempDir(), runtime.NewFake())
 
 	// dog has max=3, so 3 handlers (dog-1, dog-2, dog-3).
 	// cat has max=1, skipped. mayor is not a pool.

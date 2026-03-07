@@ -13,7 +13,7 @@ import (
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/fsys"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/gastownhall/gascity/internal/telemetry"
 	"github.com/spf13/cobra"
 )
@@ -114,7 +114,7 @@ type slingOpts struct {
 type slingDeps struct {
 	CityName string
 	Cfg      *config.City
-	SP       session.Provider
+	SP       runtime.Provider
 	Runner   SlingRunner
 	Store    beads.Store
 	Stdout   io.Writer
@@ -755,7 +755,7 @@ func checkBeadState(q BeadQuerier, beadID string, a config.Agent) beadCheckResul
 // For pools, nudges the first running instance. Warns and skips if
 // the target is not running.
 func doSlingNudge(a *config.Agent, cityName string, cfg *config.City,
-	sp session.Provider, stdout, stderr io.Writer,
+	sp runtime.Provider, stdout, stderr io.Writer,
 ) {
 	st := cfg.Workspace.SessionTemplate
 
@@ -1060,7 +1060,7 @@ func printBeadInfo(w func(string), q BeadQuerier, beadID string) {
 
 // printNudgePreview prints the Nudge section for dry-run output.
 func printNudgePreview(w func(string), a config.Agent, cityName string,
-	sp session.Provider, cfg *config.City,
+	sp runtime.Provider, cfg *config.City,
 ) {
 	st := cfg.Workspace.SessionTemplate
 	w("Nudge:")

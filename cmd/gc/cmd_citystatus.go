@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/gastownhall/gascity/internal/session"
 	"github.com/spf13/cobra"
 )
@@ -53,8 +54,10 @@ type StatusRigJSON struct {
 
 // StatusSummaryJSON is the agent count summary in JSON output.
 type StatusSummaryJSON struct {
-	TotalAgents   int `json:"total_agents"`
-	RunningAgents int `json:"running_agents"`
+	TotalAgents       int `json:"total_agents"`
+	RunningAgents     int `json:"running_agents"`
+	ActiveSessions    int `json:"active_sessions,omitempty"`
+	SuspendedSessions int `json:"suspended_sessions,omitempty"`
 }
 
 // newStatusCmd creates the "gc status [path]" command.
@@ -111,9 +114,9 @@ func cmdCityStatus(args []string, jsonOutput bool, stdout, stderr io.Writer) int
 }
 
 // doCityStatus prints the city-wide status overview. Accepts injected
-// session.Provider for testability.
+// runtime.Provider for testability.
 func doCityStatus(
-	sp session.Provider,
+	sp runtime.Provider,
 	dops drainOps,
 	cfg *config.City,
 	cityPath string,
@@ -209,13 +212,31 @@ func doCityStatus(
 		}
 	}
 
+	// Chat sessions count (best-effort — skip if store unavailable).
+	if store, err := openCityStoreAt(cityPath); err == nil {
+		mgr := session.NewManager(store, sp)
+		if sessions, err := mgr.List("", ""); err == nil && len(sessions) > 0 {
+			var active, suspended int
+			for _, s := range sessions {
+				switch s.State {
+				case session.StateActive:
+					active++
+				case session.StateSuspended:
+					suspended++
+				}
+			}
+			fmt.Fprintln(stdout)                                                          //nolint:errcheck // best-effort stdout
+			fmt.Fprintf(stdout, "Sessions: %d active, %d suspended\n", active, suspended) //nolint:errcheck // best-effort stdout
+		}
+	}
+
 	return 0
 }
 
 // doCityStatusJSON outputs city status as JSON. Accepts injected providers
 // for testability.
 func doCityStatusJSON(
-	sp session.Provider,
+	sp runtime.Provider,
 	cfg *config.City,
 	cityPath string,
 	stdout, stderr io.Writer,
@@ -300,6 +321,23 @@ func doCityStatusJSON(
 		})
 	}
 
+	summary := StatusSummaryJSON{TotalAgents: totalAgents, RunningAgents: runningAgents}
+
+	// Chat sessions count (best-effort).
+	if store, err := openCityStoreAt(cityPath); err == nil {
+		mgr := session.NewManager(store, sp)
+		if sessions, err := mgr.List("", ""); err == nil {
+			for _, s := range sessions {
+				switch s.State {
+				case session.StateActive:
+					summary.ActiveSessions++
+				case session.StateSuspended:
+					summary.SuspendedSessions++
+				}
+			}
+		}
+	}
+
 	status := StatusJSON{
 		CityName:   cityName,
 		CityPath:   cityPath,
@@ -307,7 +345,7 @@ func doCityStatusJSON(
 		Suspended:  citySuspended(cfg),
 		Agents:     agents,
 		Rigs:       rigs,
-		Summary:    StatusSummaryJSON{TotalAgents: totalAgents, RunningAgents: runningAgents},
+		Summary:    summary,
 	}
 
 	data, err := json.MarshalIndent(status, "", "  ")

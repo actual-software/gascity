@@ -8,11 +8,12 @@ package api
 import (
 	"time"
 
+	"github.com/gastownhall/gascity/internal/automations"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/mail"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 // State provides read access to controller-managed state.
@@ -22,7 +23,7 @@ type State interface {
 	Config() *config.City
 
 	// SessionProvider returns the current session provider.
-	SessionProvider() session.Provider
+	SessionProvider() runtime.Provider
 
 	// BeadStore returns the bead store for a rig (by name).
 	// Returns nil if the rig doesn't exist.
@@ -56,6 +57,14 @@ type State interface {
 	// IsQuarantined reports whether an agent (by session name) is
 	// currently quarantined due to crash-loop detection.
 	IsQuarantined(sessionName string) bool
+
+	// CityBeadStore returns the city-level bead store for session beads.
+	// Returns nil if no store is available.
+	CityBeadStore() beads.Store
+
+	// Automations returns the current set of scanned automations.
+	// Returns nil if automations are not configured.
+	Automations() []automations.Automation
 }
 
 // AgentUpdate holds optional fields for a partial agent update. Pointer fields
@@ -163,6 +172,14 @@ type StateMutator interface {
 
 	// DeleteProviderPatch removes a provider patch by name.
 	DeleteProviderPatch(name string) error
+
+	// --- Automation overrides ---
+
+	// EnableAutomation enables an automation via overrides in city.toml.
+	EnableAutomation(name, rig string) error
+
+	// DisableAutomation disables an automation via overrides in city.toml.
+	DisableAutomation(name, rig string) error
 
 	// --- Runtime actions (ephemeral session operations) ---
 

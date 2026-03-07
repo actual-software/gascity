@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gastownhall/gascity/internal/events"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/spf13/cobra"
 )
 
@@ -29,9 +29,9 @@ type drainOps interface {
 	clearDriftRestart(sessionName string) error
 }
 
-// providerDrainOps implements drainOps using session.Provider metadata.
+// providerDrainOps implements drainOps using runtime.Provider metadata.
 type providerDrainOps struct {
-	sp session.Provider
+	sp runtime.Provider
 }
 
 func (o *providerDrainOps) setDrain(sessionName string) error {
@@ -110,8 +110,8 @@ func (o *providerDrainOps) clearDriftRestart(sessionName string) error {
 	return o.sp.RemoveMeta(sessionName, "GC_DRIFT_RESTART")
 }
 
-// newDrainOps creates a drainOps from a session.Provider.
-func newDrainOps(sp session.Provider) drainOps {
+// newDrainOps creates a drainOps from a runtime.Provider.
+func newDrainOps(sp runtime.Provider) drainOps {
 	return &providerDrainOps{sp: sp}
 }
 
@@ -174,7 +174,7 @@ func cmdAgentDrain(args []string, stdout, stderr io.Writer) int {
 }
 
 // doAgentDrain sets the drain signal on an agent's session.
-func doAgentDrain(dops drainOps, sp session.Provider, rec events.Recorder,
+func doAgentDrain(dops drainOps, sp runtime.Provider, rec events.Recorder,
 	agentName, sn string, stdout, stderr io.Writer,
 ) int {
 	if !sp.IsRunning(sn) {
@@ -252,7 +252,7 @@ func cmdAgentUndrain(args []string, stdout, stderr io.Writer) int {
 }
 
 // doAgentUndrain clears the drain signal on an agent's session.
-func doAgentUndrain(dops drainOps, sp session.Provider, rec events.Recorder,
+func doAgentUndrain(dops drainOps, sp runtime.Provider, rec events.Recorder,
 	agentName, sn string, stdout, stderr io.Writer,
 ) int {
 	if !sp.IsRunning(sn) {

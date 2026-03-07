@@ -17,7 +17,7 @@ import (
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/hooks"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/gastownhall/gascity/internal/telemetry"
 	"github.com/spf13/cobra"
 )
@@ -92,7 +92,7 @@ func computeSuspendedNames(cfg *config.City, cityName, cityPath string, multiReg
 // multi-instance pool agent in the config, mapped to the pool's drain
 // timeout. Used to distinguish excess pool members (drain) from true orphans
 // (kill) during reconciliation, and to enforce drain timeouts.
-func computePoolSessions(cfg *config.City, cityName string, sp session.Provider) map[string]time.Duration {
+func computePoolSessions(cfg *config.City, cityName string, sp runtime.Provider) map[string]time.Duration {
 	ps := make(map[string]time.Duration)
 	st := cfg.Workspace.SessionTemplate
 	for _, a := range cfg.Agents {
@@ -117,7 +117,7 @@ type poolDeathInfo struct {
 // computePoolDeathHandlers builds a map from session name to death handler
 // for every pool instance (static for bounded pools, currently running for
 // unlimited). Used to detect and handle pool deaths.
-func computePoolDeathHandlers(cfg *config.City, cityName, cityPath string, sp session.Provider) map[string]poolDeathInfo {
+func computePoolDeathHandlers(cfg *config.City, cityName, cityPath string, sp runtime.Provider) map[string]poolDeathInfo {
 	handlers := make(map[string]poolDeathInfo)
 	st := cfg.Workspace.SessionTemplate
 	for _, a := range cfg.Agents {
@@ -164,7 +164,7 @@ var dryRunMode bool
 // buildIdleTracker creates an idleTracker from the config, populating
 // timeouts for agents that have idle_timeout set. Returns nil if no
 // agents use idle timeout (disabled).
-func buildIdleTracker(cfg *config.City, cityName string, sp session.Provider) idleTracker {
+func buildIdleTracker(cfg *config.City, cityName string, sp runtime.Provider) idleTracker {
 	var hasAny bool
 	st := cfg.Workspace.SessionTemplate
 	for _, a := range cfg.Agents {
@@ -437,7 +437,7 @@ func doStart(args []string, controllerMode bool, stdout, stderr io.Writer) int {
 	// Called once for one-shot, or on each tick for controller mode.
 	// Pool check commands are re-evaluated each call. Accepts a *config.City
 	// parameter so the controller loop can pass freshly-reloaded config.
-	buildAgents := func(c *config.City, currentSP session.Provider) []agent.Agent {
+	buildAgents := func(c *config.City, currentSP runtime.Provider) []agent.Agent {
 		return buildAgentsFromConfig(cityName, cityPath, beaconTime, c, currentSP, multiReg, "gc start", stderr)
 	}
 
@@ -480,7 +480,7 @@ func doStart(args []string, controllerMode bool, stdout, stderr io.Writer) int {
 	rops := newReconcileOps(sp)
 	suspendedNames := computeSuspendedNames(cfg, cityName, cityPath, multiReg)
 	code := doReconcileAgents(agents, sp, rops, nil, nil, nil, recorder, nil, suspendedNames, 0, cfg.Session.StartupTimeoutDuration(), stdout, stderr, sigCtx)
-	ensureObservers(agents, observeSearchPaths(cfg.Daemon.ObservePaths), recorder)
+	ensureObservers(agents, observeSearchPaths(cfg.Daemon.ObservePaths))
 	if code == 0 {
 		fmt.Fprintln(stdout, "City started.") //nolint:errcheck // best-effort stdout
 	}
@@ -539,7 +539,7 @@ func settingsArgs(cityPath, providerName string) string {
 // copy_files list so container providers (K8s) can stage them into pods.
 // Docker doesn't need this (bind-mount), but the extra entries are harmless.
 // Avoids duplicating .gc/settings.json if settingsArgs already added it.
-func stageHookFiles(copyFiles []session.CopyEntry, cityPath, workDir string) []session.CopyEntry {
+func stageHookFiles(copyFiles []runtime.CopyEntry, cityPath, workDir string) []runtime.CopyEntry {
 	// workDir-based hooks: gemini, opencode, copilot, pi, omp.
 	for _, rel := range []string{
 		filepath.Join(".gemini", "settings.json"),
@@ -550,13 +550,13 @@ func stageHookFiles(copyFiles []session.CopyEntry, cityPath, workDir string) []s
 	} {
 		abs := filepath.Join(workDir, rel)
 		if _, err := os.Stat(abs); err == nil {
-			copyFiles = append(copyFiles, session.CopyEntry{Src: abs, RelDst: rel})
+			copyFiles = append(copyFiles, runtime.CopyEntry{Src: abs, RelDst: rel})
 		}
 	}
 	// Stage Claude skills directory (if materialized).
 	skillsDir := filepath.Join(workDir, ".claude", "skills")
 	if info, err := os.Stat(skillsDir); err == nil && info.IsDir() {
-		copyFiles = append(copyFiles, session.CopyEntry{
+		copyFiles = append(copyFiles, runtime.CopyEntry{
 			Src: skillsDir, RelDst: filepath.Join(".claude", "skills"),
 		})
 	}
@@ -573,7 +573,7 @@ func stageHookFiles(copyFiles []session.CopyEntry, cityPath, workDir string) []s
 			}
 		}
 		if !alreadyStaged {
-			copyFiles = append(copyFiles, session.CopyEntry{Src: settingsAbs, RelDst: settingsRel})
+			copyFiles = append(copyFiles, runtime.CopyEntry{Src: settingsAbs, RelDst: settingsRel})
 		}
 	}
 	return copyFiles
@@ -693,7 +693,7 @@ type imageChecker interface {
 // agents exist locally. Called once before the reconcile loop to fail fast
 // instead of discovering a missing image after N serial start timeouts.
 // Returns nil if the provider doesn't support image checking.
-func checkAgentImages(sp session.Provider, agents []config.Agent, _ io.Writer) error {
+func checkAgentImages(sp runtime.Provider, agents []config.Agent, _ io.Writer) error {
 	ic, ok := sp.(imageChecker)
 	if !ok {
 		return nil
@@ -719,7 +719,7 @@ func checkAgentImages(sp session.Provider, agents []config.Agent, _ io.Writer) e
 // Uses ListRunning with the city prefix for a single batch call instead
 // of N individual IsRunning calls. For exec providers (K8s), this reduces
 // N subprocess spawns to 1.
-func countRunningPoolInstances(agentName, agentDir string, pool config.PoolConfig, cityName, sessionTemplate string, sp session.Provider) int {
+func countRunningPoolInstances(agentName, agentDir string, pool config.PoolConfig, cityName, sessionTemplate string, sp runtime.Provider) int {
 	if pool.IsUnlimited() {
 		// Unlimited: count by prefix matching.
 		instances := discoverPoolInstances(agentName, agentDir, pool, cityName, sessionTemplate, sp)

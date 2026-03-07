@@ -80,6 +80,12 @@ func (m *MemStore) Update(id string, opts UpdateOpts) error {
 	defer m.mu.Unlock()
 	for i := range m.beads {
 		if m.beads[i].ID == id {
+			if opts.Title != nil {
+				m.beads[i].Title = *opts.Title
+			}
+			if opts.Status != nil {
+				m.beads[i].Status = *opts.Status
+			}
 			if opts.Description != nil {
 				m.beads[i].Description = *opts.Description
 			}

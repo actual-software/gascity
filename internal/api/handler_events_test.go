@@ -146,3 +146,75 @@ func TestEventStreamNoEvents(t *testing.T) {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
 	}
 }
+
+func TestHandleEventEmit(t *testing.T) {
+	state := newFakeState(t)
+	srv := New(state)
+
+	body := `{"type":"deploy.completed","actor":"ci","subject":"myapp","message":"v2.3.1"}`
+	req := newPostRequest("/v0/events", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	ep := state.eventProv.(*events.Fake)
+	evts, err := ep.List(events.Filter{Type: "deploy.completed"})
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(evts) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(evts))
+	}
+	if evts[0].Actor != "ci" {
+		t.Errorf("actor = %q, want %q", evts[0].Actor, "ci")
+	}
+	if evts[0].Subject != "myapp" {
+		t.Errorf("subject = %q, want %q", evts[0].Subject, "myapp")
+	}
+}
+
+func TestHandleEventEmit_MissingType(t *testing.T) {
+	state := newFakeState(t)
+	srv := New(state)
+
+	body := `{"actor":"ci"}`
+	req := newPostRequest("/v0/events", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHandleEventEmit_MissingActor(t *testing.T) {
+	state := newFakeState(t)
+	srv := New(state)
+
+	body := `{"type":"test.event"}`
+	req := newPostRequest("/v0/events", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHandleEventEmit_NoEventsProvider(t *testing.T) {
+	state := newFakeState(t)
+	state.eventProv = nil
+	srv := New(state)
+
+	body := `{"type":"test.event","actor":"ci"}`
+	req := newPostRequest("/v0/events", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}

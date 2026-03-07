@@ -1,6 +1,6 @@
 # Design Doc: State-Mutating Operations API Surface
 
-**Status:** Phase 1 implemented — Phases 2-5 are future work
+**Status:** All phases (1-5) implemented
 **Date:** 2026-03-06
 **Authors:** Claude (industry analysis + endpoint catalog), Codex (semantic analysis + control-plane model)
 **Synthesized by:** Claude
@@ -1354,27 +1354,25 @@ Patch resources (12):
 - PUT (full replace) for providers
 - Optimistic concurrency (ETags)
 
-### Phase 3: City Lifecycle + Automations + Operations
+### Phase 3: City Lifecycle + Automations + Operations ✅
 
-**Endpoints:** ~18
-```
-City start/stop/restart/reconcile (4)
-GET /v0/city (1)
-Automation list/show/run/enable/disable/history/check (7)
-Operations CRUD (4)
-Events emit (1)
-Enhanced status (1)
-```
+**Status:** Delivered. Automations, events, enhanced status, rig restart all implemented.
 
-**Implementation:**
-- City lifecycle wired to controller loop
-- Automation mutator
-- Operation tracking with async phase transitions
-- Audit event emission on all mutations
+**Endpoints implemented:**
+- `GET /v0/city` — city info
+- Automation CRUD: list/show/enable/disable
+- `POST /v0/events` — event emission
+- Enhanced status with uptime, version, agent counts
+- `POST /v0/rig/{name}/restart` — kills all agents in rig (reconciler restarts)
+- `POST /v0/agent/{name}/restart` — kills agent session (reconciler restarts)
 
-### Phase 4: Polish + Bead/Mail Extensions + Packs
+**Deferred:** City start/stop/reconcile (controller lifecycle), operation tracking.
 
-**Endpoints:** ~12
+### Phase 4: Polish + Bead/Mail Extensions + Packs ✅
+
+**Status:** Delivered. All bead/mail extensions, cursor pagination, and idempotency implemented.
+
+**Endpoints implemented:**
 ```
 Packs list/fetch (2)
 PATCH /v0/bead/{id} (1)
@@ -1383,25 +1381,40 @@ POST /v0/bead/{id}/assign (1)
 DELETE /v0/bead/{id}, /v0/mail/{id}, /v0/convoy/{id} (3)
 POST /v0/convoy/{id}/remove, GET .../check (2)
 POST /v0/events (1)
-+ Cursor pagination on list endpoints
-+ Idempotency-Key on existing bead/mail creates
-+ X-GC-Request-Id on all responses
 ```
 
-### Phase 5: CLI as API Client
+**Cross-cutting features:**
+- Cursor pagination on list endpoints (beads, mail, convoys, events)
+  via `?cursor=<opaque>&limit=N` with `next_cursor` in response
+- `Idempotency-Key` header on `POST /v0/beads` and `POST /v0/mail`
+  (in-memory cache with 30-minute TTL; 422 on key reuse with different body)
+- `X-GC-Request-Id` on all responses (via middleware)
 
-**No new endpoints.** Route CLI writes through the API when a controller
-is running:
+### Phase 5: CLI as API Client ✅
 
+**Status:** Delivered. No new endpoints — CLI routes writes through API
+when controller is running.
+
+**Implementation:**
+- `internal/api/client.go` — HTTP client wrapping mutation endpoints
+  (SuspendCity, ResumeCity, SuspendAgent, ResumeAgent, SuspendRig, ResumeRig)
+- `cmd/gc/apiroute.go` — `apiClient(cityPath)` detects running controller
+  with API, returns client or nil for fallback to direct mutation
+- CLI commands wired: `gc suspend`, `gc resume`, `gc agent suspend/resume`,
+  `gc rig suspend/resume`
+
+**Pattern:**
 ```go
-if controllerRunning() {
-    return apiClient.CreateAgent(spec)
+if c := apiClient(cityPath); c != nil {
+    return c.SuspendAgent(name)
 }
 // No controller — direct file mutation (existing behavior)
-return createAgentDirect(spec)
+return doAgentSuspend(fs, cityPath, name, stdout, stderr)
 ```
 
-Parity tests ensure CLI and API produce identical results.
+**Tests:**
+- `internal/api/client_test.go` — 8 tests covering all client methods,
+  error responses, and CSRF header propagation
 
 ---
 

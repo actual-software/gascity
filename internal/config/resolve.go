@@ -128,6 +128,9 @@ func specToResolved(name string, spec *ProviderSpec) *ResolvedProvider {
 		SupportsACP:            spec.SupportsACP,
 		SupportsHooks:          spec.SupportsHooks,
 		InstructionsFile:       spec.InstructionsFile,
+		ResumeFlag:             spec.ResumeFlag,
+		ResumeStyle:            spec.ResumeStyle,
+		SessionIDFlag:          spec.SessionIDFlag,
 	}
 	// Default InstructionsFile to "AGENTS.md" if unset.
 	if rp.InstructionsFile == "" {

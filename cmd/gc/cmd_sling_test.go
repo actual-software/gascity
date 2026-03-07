@@ -9,7 +9,7 @@ import (
 
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 // errStore wraps a beads.Store and injects errors into MolCook/MolCookOn.
@@ -84,7 +84,7 @@ func testOpts(a config.Agent, beadOrFormula string) slingOpts {
 
 // testDeps constructs a slingDeps for testing, returning the deps and
 // stdout/stderr buffers for inspection.
-func testDeps(cfg *config.City, sp session.Provider, runner SlingRunner) (slingDeps, *bytes.Buffer, *bytes.Buffer) {
+func testDeps(cfg *config.City, sp runtime.Provider, runner SlingRunner) (slingDeps, *bytes.Buffer, *bytes.Buffer) {
 	var stdout, stderr bytes.Buffer
 	return slingDeps{
 		CityName: "test-city",
@@ -117,7 +117,7 @@ func TestBuildSlingCommand(t *testing.T) {
 
 func TestDoSlingBeadToFixedAgent(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -142,7 +142,7 @@ func TestDoSlingBeadToFixedAgent(t *testing.T) {
 
 func TestDoSlingBeadToPool(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{
 		Name: "polecat",
@@ -165,7 +165,7 @@ func TestDoSlingBeadToPool(t *testing.T) {
 
 func TestDoSlingFormulaToAgent(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -193,7 +193,7 @@ func TestDoSlingFormulaToAgent(t *testing.T) {
 
 func TestDoSlingFormulaWithTitle(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -218,7 +218,7 @@ func TestDoSlingFormulaWithTitle(t *testing.T) {
 
 func TestDoSlingSuspendedAgentWarns(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor", Suspended: true}
 
@@ -240,7 +240,7 @@ func TestDoSlingSuspendedAgentWarns(t *testing.T) {
 
 func TestDoSlingSuspendedAgentForce(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor", Suspended: true}
 
@@ -259,7 +259,7 @@ func TestDoSlingSuspendedAgentForce(t *testing.T) {
 
 func TestDoSlingPoolMaxZeroWarns(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{
 		Name: "polecat",
@@ -281,7 +281,7 @@ func TestDoSlingPoolMaxZeroWarns(t *testing.T) {
 
 func TestDoSlingPoolMaxZeroForce(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{
 		Name: "polecat",
@@ -305,7 +305,7 @@ func TestDoSlingPoolMaxZeroForce(t *testing.T) {
 func TestDoSlingRunnerError(t *testing.T) {
 	runner := newFakeRunner()
 	runner.on("bd update", "", fmt.Errorf("bd not found"))
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -323,7 +323,7 @@ func TestDoSlingRunnerError(t *testing.T) {
 
 func TestDoSlingFormulaInstantiationError(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -343,8 +343,8 @@ func TestDoSlingFormulaInstantiationError(t *testing.T) {
 
 func TestDoSlingNudgeFixedAgent(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	sp.Calls = nil // clear start call
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
@@ -374,7 +374,7 @@ func TestDoSlingNudgeFixedAgent(t *testing.T) {
 
 func TestDoSlingNudgeNoSession(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// Don't start the session — agent has no running session.
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
@@ -394,7 +394,7 @@ func TestDoSlingNudgeNoSession(t *testing.T) {
 
 func TestDoSlingNudgeSuspended(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor", Suspended: true}
 
@@ -414,9 +414,9 @@ func TestDoSlingNudgeSuspended(t *testing.T) {
 
 func TestDoSlingNudgePoolMember(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// Start pool instance 2 (instance 1 not running).
-	_ = sp.Start(context.Background(), "hw--polecat-2", session.Config{})
+	_ = sp.Start(context.Background(), "hw--polecat-2", runtime.Config{})
 	sp.Calls = nil
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{
@@ -447,7 +447,7 @@ func TestDoSlingNudgePoolMember(t *testing.T) {
 
 func TestDoSlingNudgePoolNoMembers(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// No pool instances running.
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{
@@ -471,7 +471,7 @@ func TestDoSlingNudgePoolNoMembers(t *testing.T) {
 
 func TestDoSlingCustomSlingQuery(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{
 		Name:       "worker",
@@ -569,7 +569,7 @@ func (q *fakeChildQuerier) Children(parentID string) ([]beads.Bead, error) {
 
 func TestCheckBeadStateAssigneeWarns(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 	q := &fakeQuerier{bead: beads.Bead{ID: "BL-42", Assignee: "other-agent"}}
@@ -592,7 +592,7 @@ func TestCheckBeadStateAssigneeWarns(t *testing.T) {
 
 func TestCheckBeadStatePoolLabelWarns(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 	q := &fakeQuerier{bead: beads.Bead{ID: "BL-42", Labels: []string{"pool:hw/polecat"}}}
@@ -611,7 +611,7 @@ func TestCheckBeadStatePoolLabelWarns(t *testing.T) {
 
 func TestCheckBeadStateBothWarnings(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 	q := &fakeQuerier{bead: beads.Bead{
@@ -637,7 +637,7 @@ func TestCheckBeadStateBothWarnings(t *testing.T) {
 
 func TestCheckBeadStateCleanNoWarning(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 	q := &fakeQuerier{bead: beads.Bead{ID: "BL-42"}}
@@ -656,7 +656,7 @@ func TestCheckBeadStateCleanNoWarning(t *testing.T) {
 
 func TestCheckBeadStateQueryFailsNoWarning(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 	q := &fakeQuerier{err: fmt.Errorf("bd not available")}
@@ -675,7 +675,7 @@ func TestCheckBeadStateQueryFailsNoWarning(t *testing.T) {
 
 func TestCheckBeadStateNilQuerierNoWarning(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -693,7 +693,7 @@ func TestCheckBeadStateNilQuerierNoWarning(t *testing.T) {
 
 func TestCheckBeadStateForceSkipsCheck(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 	q := &fakeQuerier{bead: beads.Bead{ID: "BL-42", Assignee: "other-agent"}}
@@ -714,7 +714,7 @@ func TestCheckBeadStateForceSkipsCheck(t *testing.T) {
 func TestCheckBeadStateFormulaChecksResolvedBead(t *testing.T) {
 	runner := newFakeRunner()
 	runner.on("bd mol cook", "WP-99\n", nil)
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 	// The querier returns a clean bead for the wisp root — verifies check
@@ -738,7 +738,7 @@ func TestCheckBeadStateFormulaChecksResolvedBead(t *testing.T) {
 
 func TestDoSlingBatchConvoyExpandsChildren(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -770,7 +770,7 @@ func TestDoSlingBatchConvoyExpandsChildren(t *testing.T) {
 
 func TestDoSlingBatchConvoyMixedStatus(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -810,7 +810,7 @@ func TestDoSlingBatchConvoyMixedStatus(t *testing.T) {
 
 func TestDoSlingBatchConvoyNoOpenChildren(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -835,7 +835,7 @@ func TestDoSlingBatchConvoyNoOpenChildren(t *testing.T) {
 
 func TestDoSlingBatchEpicExpands(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -863,7 +863,7 @@ func TestDoSlingBatchEpicExpands(t *testing.T) {
 
 func TestDoSlingBatchRegularBeadPassthrough(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -892,7 +892,7 @@ func TestDoSlingBatchRegularBeadPassthrough(t *testing.T) {
 func TestDoSlingBatchFormulaPassthrough(t *testing.T) {
 	runner := newFakeRunner()
 	runner.on("bd mol cook", "WP-1\n", nil)
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -916,7 +916,7 @@ func TestDoSlingBatchFormulaPassthrough(t *testing.T) {
 
 func TestDoSlingBatchNilQuerier(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -934,7 +934,7 @@ func TestDoSlingBatchNilQuerier(t *testing.T) {
 
 func TestDoSlingBatchGetFails(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -955,7 +955,7 @@ func TestDoSlingBatchGetFails(t *testing.T) {
 
 func TestDoSlingBatchChildrenFails(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -979,7 +979,7 @@ func TestDoSlingBatchPartialFailure(t *testing.T) {
 	runner := newFakeRunner()
 	// Fail on BL-2 only.
 	runner.on("BL-2", "", fmt.Errorf("bd update failed"))
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1016,7 +1016,7 @@ func TestDoSlingBatchPartialFailure(t *testing.T) {
 func TestDoSlingBatchAllChildrenFail(t *testing.T) {
 	runner := newFakeRunner()
 	runner.on("bd update", "", fmt.Errorf("bd broken"))
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1041,8 +1041,8 @@ func TestDoSlingBatchAllChildrenFail(t *testing.T) {
 
 func TestDoSlingBatchNudgeOnceAfterAll(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	sp.Calls = nil
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
@@ -1076,7 +1076,7 @@ func TestDoSlingBatchNudgeOnceAfterAll(t *testing.T) {
 
 func TestDoSlingBatchForceSkipsPerChildWarnings(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1119,7 +1119,7 @@ func TestOnAndFormulaMutuallyExclusive(t *testing.T) {
 
 func TestOnFormulaAttachesAndRoutes(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1155,7 +1155,7 @@ func TestOnFormulaAttachesAndRoutes(t *testing.T) {
 
 func TestOnFormulaWithTitle(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1183,7 +1183,7 @@ func TestOnFormulaWithTitle(t *testing.T) {
 
 func TestOnFormulaCookError(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1203,7 +1203,7 @@ func TestOnFormulaCookError(t *testing.T) {
 
 func TestOnFormulaCookEmpty(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1223,7 +1223,7 @@ func TestOnFormulaCookEmpty(t *testing.T) {
 
 func TestOnFormulaExistingMoleculeErrors(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1253,7 +1253,7 @@ func TestOnFormulaExistingMoleculeErrors(t *testing.T) {
 
 func TestOnFormulaExistingWispErrors(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1279,7 +1279,7 @@ func TestOnFormulaExistingWispErrors(t *testing.T) {
 
 func TestOnFormulaAutoBurnStaleMolecule(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1310,7 +1310,7 @@ func TestOnFormulaAutoBurnStaleMolecule(t *testing.T) {
 
 func TestOnFormulaSkipsClosedMolecule(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1332,7 +1332,7 @@ func TestOnFormulaSkipsClosedMolecule(t *testing.T) {
 
 func TestOnFormulaCleanBead(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1359,7 +1359,7 @@ func TestOnFormulaCleanBead(t *testing.T) {
 func TestOnFormulaNilQuerier(t *testing.T) {
 	runner := newFakeRunner()
 	runner.on("bd mol cook", "WP-1\n", nil)
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1376,7 +1376,7 @@ func TestOnFormulaNilQuerier(t *testing.T) {
 
 func TestOnFormulaOutput(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1400,7 +1400,7 @@ func TestOnFormulaOutput(t *testing.T) {
 
 func TestBatchOnConvoy(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1449,7 +1449,7 @@ func TestBatchOnConvoy(t *testing.T) {
 
 func TestBatchOnFailFastMolecule(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1486,7 +1486,7 @@ func TestBatchOnFailFastMolecule(t *testing.T) {
 
 func TestBatchAutoBurnStaleMolecules(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1521,7 +1521,7 @@ func TestBatchAutoBurnStaleMolecules(t *testing.T) {
 
 func TestBatchSkipsClosedMolecules(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1547,7 +1547,7 @@ func TestBatchSkipsClosedMolecules(t *testing.T) {
 
 func TestBatchOnPartialCookFailure(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1591,8 +1591,8 @@ func TestBatchOnPartialCookFailure(t *testing.T) {
 func TestBatchOnNudgeOnce(t *testing.T) {
 	runner := newFakeRunner()
 	runner.on("bd mol cook", "WP-1\n", nil)
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	sp.Calls = nil
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
@@ -1626,7 +1626,7 @@ func TestBatchOnNudgeOnce(t *testing.T) {
 
 func TestBatchOnRegularPassthrough(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1670,7 +1670,7 @@ func TestDryRunFlagExists(t *testing.T) {
 
 func TestDryRunSingleBead(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 	q := &fakeQuerier{bead: beads.Bead{ID: "BL-42", Title: "Implement login page", Type: "task", Status: "open"}}
@@ -1714,7 +1714,7 @@ func TestDryRunSingleBead(t *testing.T) {
 
 func TestDryRunFormula(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1747,7 +1747,7 @@ func TestDryRunFormula(t *testing.T) {
 
 func TestDryRunOnFormula(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 	q := newFakeChildQuerier()
@@ -1783,7 +1783,7 @@ func TestDryRunOnFormula(t *testing.T) {
 
 func TestDryRunPool(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{
 		Name: "polecat",
@@ -1816,7 +1816,7 @@ func TestDryRunPool(t *testing.T) {
 
 func TestDryRunConvoy(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1872,7 +1872,7 @@ func TestDryRunConvoy(t *testing.T) {
 
 func TestDryRunBatchOnFormula(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1918,8 +1918,8 @@ func TestDryRunBatchOnFormula(t *testing.T) {
 
 func TestDryRunNudgeRunning(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	sp.Calls = nil
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
@@ -1953,7 +1953,7 @@ func TestDryRunNudgeRunning(t *testing.T) {
 
 func TestDryRunNudgeNotRunning(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1974,7 +1974,7 @@ func TestDryRunNudgeNotRunning(t *testing.T) {
 
 func TestDryRunNoMutations(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -1993,7 +1993,7 @@ func TestDryRunNoMutations(t *testing.T) {
 
 func TestDryRunSuspendedWarning(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor", Suspended: true}
 
@@ -2017,7 +2017,7 @@ func TestDryRunSuspendedWarning(t *testing.T) {
 
 func TestDryRunOnExistingMolecule(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -2046,7 +2046,7 @@ func TestDryRunOnExistingMolecule(t *testing.T) {
 
 func TestDryRunNilQuerier(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -2162,7 +2162,7 @@ func TestCheckBeadStateDifferentPoolLabel(t *testing.T) {
 
 func TestDoSlingIdempotentSkipsRouting(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 	q := &fakeQuerier{bead: beads.Bead{ID: "BL-42", Assignee: "mayor"}}
@@ -2187,7 +2187,7 @@ func TestDoSlingIdempotentSkipsRouting(t *testing.T) {
 
 func TestDoSlingIdempotentForceOverrides(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 	q := &fakeQuerier{bead: beads.Bead{ID: "BL-42", Assignee: "mayor"}}
@@ -2212,7 +2212,7 @@ func TestDoSlingIdempotentForceOverrides(t *testing.T) {
 func TestDoSlingIdempotentWithOnFormula(t *testing.T) {
 	runner := newFakeRunner()
 	runner.on("bd mol cook", "WP-1\n", nil)
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 	// Bead is already assigned to mayor — idempotent.
@@ -2237,7 +2237,7 @@ func TestDoSlingIdempotentWithOnFormula(t *testing.T) {
 
 func TestDoSlingBatchIdempotentChildSkipped(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -2283,7 +2283,7 @@ func TestDoSlingBatchIdempotentChildSkipped(t *testing.T) {
 
 func TestDoSlingBatchAllIdempotent(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 
@@ -2317,7 +2317,7 @@ func TestDoSlingBatchAllIdempotent(t *testing.T) {
 
 func TestDryRunIdempotentBead(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
 	q := &fakeQuerier{bead: beads.Bead{ID: "BL-42", Title: "Login page", Assignee: "mayor", Status: "open"}}
@@ -2469,7 +2469,7 @@ func TestCheckCrossRigCityAgent(t *testing.T) {
 
 func TestDoSlingCrossRigBlocks(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
 		Rigs:      []config.Rig{{Name: "hello-world", Path: "/tmp/hw"}},
@@ -2493,7 +2493,7 @@ func TestDoSlingCrossRigBlocks(t *testing.T) {
 
 func TestDoSlingCrossRigForceOverrides(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
 		Rigs:      []config.Rig{{Name: "hello-world", Path: "/tmp/hw"}},
@@ -2518,7 +2518,7 @@ func TestDoSlingCrossRigForceOverrides(t *testing.T) {
 
 func TestDoSlingCrossRigSameRigAllowed(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
 		Rigs:      []config.Rig{{Name: "hello-world", Path: "/tmp/hw"}},
@@ -2539,7 +2539,7 @@ func TestDoSlingCrossRigSameRigAllowed(t *testing.T) {
 
 func TestDoSlingBatchCrossRigBlocks(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
 		Rigs:      []config.Rig{{Name: "hello-world", Path: "/tmp/hw"}},
@@ -2570,7 +2570,7 @@ func TestDoSlingBatchCrossRigBlocks(t *testing.T) {
 
 func TestDryRunCrossRigSection(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
 		Rigs:      []config.Rig{{Name: "hello-world", Path: "/tmp/hw"}},
@@ -2606,7 +2606,7 @@ func TestDryRunCrossRigSection(t *testing.T) {
 
 func TestDryRunBatchCrossRigSection(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
 		Rigs:      []config.Rig{{Name: "hello-world", Path: "/tmp/hw"}},
@@ -2646,7 +2646,7 @@ func TestDryRunBatchCrossRigSection(t *testing.T) {
 func TestDoSlingCrossRigFormulaExempt(t *testing.T) {
 	runner := newFakeRunner()
 	runner.on("bd mol cook", "WP-1\n", nil)
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
 		Rigs:      []config.Rig{{Name: "hello-world", Path: "/tmp/hw"}},
@@ -2701,7 +2701,7 @@ func TestFormatBeadLabel(t *testing.T) {
 
 func TestDoSlingOnFormulaCrossRigBlocked(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
 		Rigs:      []config.Rig{{Name: "hello-world", Path: "/tmp/hw"}},
@@ -2727,7 +2727,7 @@ func TestDoSlingOnFormulaCrossRigBlocked(t *testing.T) {
 func TestDoSlingOnFormulaCrossRigForceOverrides(t *testing.T) {
 	runner := newFakeRunner()
 	runner.on("bd mol cook", "WP-1\n", nil)
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
 		Rigs:      []config.Rig{{Name: "hello-world", Path: "/tmp/hw"}},
@@ -2750,8 +2750,8 @@ func TestDoSlingOnFormulaCrossRigForceOverrides(t *testing.T) {
 
 func TestDoSlingBatchAllIdempotentNoNudge(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
-	_ = sp.Start(context.Background(), "mayor", session.Config{})
+	sp := runtime.NewFake()
+	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 	sp.Calls = nil
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "mayor"}
@@ -2802,7 +2802,7 @@ func TestBeadPrefixMultiDash(t *testing.T) {
 
 func TestDefaultFormulaApplied(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "polecat", Dir: "hw", DefaultSlingFormula: "mol-polecat-work"}
 
@@ -2835,7 +2835,7 @@ func TestDefaultFormulaApplied(t *testing.T) {
 
 func TestDefaultFormulaNoFormulaOverride(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "polecat", Dir: "hw", DefaultSlingFormula: "mol-polecat-work"}
 
@@ -2858,7 +2858,7 @@ func TestDefaultFormulaNoFormulaOverride(t *testing.T) {
 
 func TestDefaultFormulaExplicitOnOverrides(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "polecat", Dir: "hw", DefaultSlingFormula: "mol-polecat-work"}
 
@@ -2886,7 +2886,7 @@ func TestDefaultFormulaExplicitOnOverrides(t *testing.T) {
 
 func TestDefaultFormulaExplicitFormulaOverrides(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "polecat", Dir: "hw", DefaultSlingFormula: "mol-polecat-work"}
 
@@ -2914,7 +2914,7 @@ func TestDefaultFormulaExplicitFormulaOverrides(t *testing.T) {
 
 func TestDefaultFormulaBatchApplied(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "polecat", Dir: "hw", DefaultSlingFormula: "mol-polecat-work"}
 
@@ -2950,7 +2950,7 @@ func TestDefaultFormulaBatchApplied(t *testing.T) {
 
 func TestDefaultFormulaDryRun(t *testing.T) {
 	runner := newFakeRunner()
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	a := config.Agent{Name: "polecat", Dir: "hw", DefaultSlingFormula: "mol-polecat-work"}
 

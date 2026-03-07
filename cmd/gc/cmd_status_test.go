@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/config"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 // ---------------------------------------------------------------------------
@@ -15,8 +15,8 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestDoAgentStatus(t *testing.T) {
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "worker", session.Config{Command: "echo"}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "worker", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 	dops := newFakeDrainOps()
@@ -43,7 +43,7 @@ func TestDoAgentStatus(t *testing.T) {
 }
 
 func TestDoAgentStatusStopped(t *testing.T) {
-	sp := session.NewFake() // no sessions started
+	sp := runtime.NewFake() // no sessions started
 	dops := newFakeDrainOps()
 	cfgAgent := config.Agent{Name: "worker"}
 
@@ -59,8 +59,8 @@ func TestDoAgentStatusStopped(t *testing.T) {
 }
 
 func TestDoAgentStatusDraining(t *testing.T) {
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "worker", session.Config{Command: "echo"}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "worker", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 	dops := newFakeDrainOps()
@@ -82,7 +82,7 @@ func TestDoAgentStatusDraining(t *testing.T) {
 }
 
 func TestDoAgentStatusSuspended(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	dops := newFakeDrainOps()
 	cfgAgent := config.Agent{Name: "worker", Suspended: true}
 
@@ -102,8 +102,8 @@ func TestDoAgentStatusSuspended(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDoRigStatus(t *testing.T) {
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "frontend--polecat", session.Config{Command: "echo"}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "frontend--polecat", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 	// worker is NOT running.
@@ -143,7 +143,7 @@ func TestDoRigStatus(t *testing.T) {
 }
 
 func TestDoRigStatusSuspendedRig(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	dops := newFakeDrainOps()
 	rig := config.Rig{Name: "frontend", Path: "/tmp/frontend", Suspended: true}
 	agents := []config.Agent{
@@ -162,8 +162,8 @@ func TestDoRigStatusSuspendedRig(t *testing.T) {
 }
 
 func TestDoRigStatusWithDraining(t *testing.T) {
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "frontend--worker-1", session.Config{Command: "echo"}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "frontend--worker-1", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 	dops := newFakeDrainOps()
@@ -189,7 +189,7 @@ func TestDoRigStatusWithDraining(t *testing.T) {
 }
 
 func TestDoRigStatusSuspendedAgent(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	dops := newFakeDrainOps()
 	rig := config.Rig{Name: "frontend", Path: "/tmp/frontend"}
 	agents := []config.Agent{

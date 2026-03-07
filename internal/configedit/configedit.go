@@ -604,6 +604,37 @@ func (e *Editor) DeleteProviderPatch(name string) error {
 	})
 }
 
+// SetAutomationOverride creates or updates an automation override in
+// [automations.overrides]. Matches by name and rig.
+func (e *Editor) SetAutomationOverride(ov config.AutomationOverride) error {
+	return e.Edit(func(cfg *config.City) error {
+		if ov.Name == "" {
+			return fmt.Errorf("automation override: name is required")
+		}
+		for i := range cfg.Automations.Overrides {
+			if cfg.Automations.Overrides[i].Name == ov.Name && cfg.Automations.Overrides[i].Rig == ov.Rig {
+				cfg.Automations.Overrides[i] = ov
+				return nil
+			}
+		}
+		cfg.Automations.Overrides = append(cfg.Automations.Overrides, ov)
+		return nil
+	})
+}
+
+// DeleteAutomationOverride removes an automation override by name and rig.
+func (e *Editor) DeleteAutomationOverride(name, rig string) error {
+	return e.Edit(func(cfg *config.City) error {
+		for i := range cfg.Automations.Overrides {
+			if cfg.Automations.Overrides[i].Name == name && cfg.Automations.Overrides[i].Rig == rig {
+				cfg.Automations.Overrides = append(cfg.Automations.Overrides[:i], cfg.Automations.Overrides[i+1:]...)
+				return nil
+			}
+		}
+		return fmt.Errorf("automation override %q not found", name)
+	})
+}
+
 // validateProviders checks that all city-level providers have a command set.
 func validateProviders(providers map[string]config.ProviderSpec) error {
 	for name, spec := range providers {

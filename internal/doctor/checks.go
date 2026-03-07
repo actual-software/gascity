@@ -16,7 +16,7 @@ import (
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/fsys"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 // --- Core checks ---
@@ -301,11 +301,11 @@ type AgentSessionsCheck struct {
 	cfg             *config.City
 	cityName        string
 	sessionTemplate string
-	sp              session.Provider
+	sp              runtime.Provider
 }
 
 // NewAgentSessionsCheck creates a check for agent session liveness.
-func NewAgentSessionsCheck(cfg *config.City, cityName, sessionTemplate string, sp session.Provider) *AgentSessionsCheck {
+func NewAgentSessionsCheck(cfg *config.City, cityName, sessionTemplate string, sp runtime.Provider) *AgentSessionsCheck {
 	return &AgentSessionsCheck{cfg: cfg, cityName: cityName, sessionTemplate: sessionTemplate, sp: sp}
 }
 
@@ -348,11 +348,11 @@ type ZombieSessionsCheck struct {
 	cfg             *config.City
 	cityName        string
 	sessionTemplate string
-	sp              session.Provider
+	sp              runtime.Provider
 }
 
 // NewZombieSessionsCheck creates a check for zombie sessions.
-func NewZombieSessionsCheck(cfg *config.City, cityName, sessionTemplate string, sp session.Provider) *ZombieSessionsCheck {
+func NewZombieSessionsCheck(cfg *config.City, cityName, sessionTemplate string, sp runtime.Provider) *ZombieSessionsCheck {
 	return &ZombieSessionsCheck{cfg: cfg, cityName: cityName, sessionTemplate: sessionTemplate, sp: sp}
 }
 
@@ -407,11 +407,11 @@ type OrphanSessionsCheck struct {
 	cfg             *config.City
 	cityName        string
 	sessionTemplate string
-	sp              session.Provider
+	sp              runtime.Provider
 }
 
 // NewOrphanSessionsCheck creates a check for orphaned sessions.
-func NewOrphanSessionsCheck(cfg *config.City, cityName, sessionTemplate string, sp session.Provider) *OrphanSessionsCheck {
+func NewOrphanSessionsCheck(cfg *config.City, cityName, sessionTemplate string, sp runtime.Provider) *OrphanSessionsCheck {
 	return &OrphanSessionsCheck{cfg: cfg, cityName: cityName, sessionTemplate: sessionTemplate, sp: sp}
 }
 

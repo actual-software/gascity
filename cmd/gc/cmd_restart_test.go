@@ -9,17 +9,17 @@ import (
 
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 func TestDoRigRestart(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// Start 2 sessions for agents in the rig.
 	// SessionNameFor replaces "/" with "--".
-	if err := sp.Start(context.Background(), "frontend--polecat", session.Config{Command: "echo"}); err != nil {
+	if err := sp.Start(context.Background(), "frontend--polecat", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sp.Start(context.Background(), "frontend--worker", session.Config{Command: "echo"}); err != nil {
+	if err := sp.Start(context.Background(), "frontend--worker", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -60,7 +60,7 @@ func TestDoRigRestart(t *testing.T) {
 }
 
 func TestDoRigRestartNoneRunning(t *testing.T) {
-	sp := session.NewFake() // no sessions started
+	sp := runtime.NewFake() // no sessions started
 	rec := events.NewFake()
 	agents := []config.Agent{
 		{Name: "polecat", Dir: "frontend"},
@@ -80,13 +80,13 @@ func TestDoRigRestartNoneRunning(t *testing.T) {
 }
 
 func TestDoRigRestartWithPool(t *testing.T) {
-	sp := session.NewFake()
+	sp := runtime.NewFake()
 	// Pool agent with Max=3, only 2 running.
 	// SessionNameFor replaces "/" with "--".
-	if err := sp.Start(context.Background(), "frontend--worker-1", session.Config{Command: "echo"}); err != nil {
+	if err := sp.Start(context.Background(), "frontend--worker-1", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sp.Start(context.Background(), "frontend--worker-2", session.Config{Command: "echo"}); err != nil {
+	if err := sp.Start(context.Background(), "frontend--worker-2", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 	// worker-3 is NOT running.
@@ -123,8 +123,8 @@ func TestDoRigRestartWithPool(t *testing.T) {
 
 func TestDoRigRestartStopError(t *testing.T) {
 	// When Stop fails, the agent is skipped but the command still succeeds.
-	sp := session.NewFake()
-	if err := sp.Start(context.Background(), "frontend--polecat", session.Config{Command: "echo"}); err != nil {
+	sp := runtime.NewFake()
+	if err := sp.Start(context.Background(), "frontend--polecat", runtime.Config{Command: "echo"}); err != nil {
 		t.Fatal(err)
 	}
 	wrapper := &stopErrorProvider{Fake: sp, stopErr: fmt.Errorf("tmux borked")}

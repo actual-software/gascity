@@ -34,6 +34,7 @@ type statusResponse struct {
 	Path       string      `json:"path"`
 	Version    string      `json:"version,omitempty"`
 	UptimeSec  int         `json:"uptime_sec"`
+	Suspended  bool        `json:"suspended"`
 	AgentCount int         `json:"agent_count"`
 	RigCount   int         `json:"rig_count"`
 	Running    int         `json:"running"`
@@ -140,6 +141,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Path:       s.state.CityPath(),
 		Version:    s.state.Version(),
 		UptimeSec:  uptime,
+		Suspended:  cfg.Workspace.Suspended,
 		AgentCount: ac.Total,
 		RigCount:   rc.Total,
 		Running:    rawRunning,

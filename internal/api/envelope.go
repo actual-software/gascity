@@ -24,8 +24,9 @@ type FieldError struct {
 
 // listResponse wraps a collection for JSON serialization.
 type listResponse struct {
-	Items any `json:"items"`
-	Total int `json:"total"`
+	Items      any    `json:"items"`
+	Total      int    `json:"total"`
+	NextCursor string `json:"next_cursor,omitempty"`
 }
 
 // writeJSON writes v as JSON with the given status code.
@@ -44,6 +45,13 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 func writeListJSON(w http.ResponseWriter, index uint64, items any, total int) {
 	w.Header().Set("X-GC-Index", strconv.FormatUint(index, 10))
 	writeJSON(w, http.StatusOK, listResponse{Items: items, Total: total})
+}
+
+// writePagedJSON writes a paginated list response with X-GC-Index header.
+// nextCursor is included in the response when non-empty to indicate more pages.
+func writePagedJSON(w http.ResponseWriter, index uint64, items any, total int, nextCursor string) {
+	w.Header().Set("X-GC-Index", strconv.FormatUint(index, 10))
+	writeJSON(w, http.StatusOK, listResponse{Items: items, Total: total, NextCursor: nextCursor})
 }
 
 // writeIndexJSON writes a single resource with X-GC-Index header.

@@ -9,7 +9,7 @@ import (
 
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/config"
-	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 // buildAgentsFromConfig builds the desired agent list from config and session
@@ -29,7 +29,7 @@ func buildAgentsFromConfig(
 	cityName, cityPath string,
 	beaconTime time.Time,
 	c *config.City,
-	sp session.Provider,
+	sp runtime.Provider,
 	multiReg *multiRegistry,
 	logPrefix string,
 	stderr io.Writer,
