@@ -789,7 +789,7 @@ func buildFingerprintExtra(a *config.Agent) map[string]string {
 	if len(a.DependsOn) > 0 {
 		m["depends_on"] = strings.Join(a.DependsOn, ",")
 	}
-	if a.WakeMode != "" {
+	if a.WakeMode != "" && a.WakeMode != "resume" {
 		m["wake_mode"] = a.WakeMode
 	}
 	if len(m) == 0 {

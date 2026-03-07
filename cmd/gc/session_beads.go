@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/beads"
@@ -131,9 +130,10 @@ func syncSessionBeads(
 				ok = false
 			}
 			if ok {
-				setMeta(store, b.ID, "config_hash", coreHash, stderr) //nolint:errcheck // commit signal
+				if setMeta(store, b.ID, "config_hash", coreHash, stderr) == nil {
+					changed = true
+				}
 			}
-			changed = true
 		}
 
 		if b.Metadata["live_hash"] != liveHash {
@@ -155,11 +155,12 @@ func syncSessionBeads(
 	}
 
 	// Classify beads with no matching runnable agent.
-	// - If the session name is in configuredNames (or is a pool/multi
-	//   instance of a configured template) but not in desired (runnable),
+	// - If the session name is in configuredNames but not in desired (runnable),
 	//   the agent is suspended/disabled — mark "suspended".
 	// - If the session name is not in configuredNames at all, the agent was
-	//   removed from config — mark "orphaned".
+	//   removed from config — mark "orphaned". This includes pool/multi
+	//   instances: they are ephemeral (not user-configured) and correctly
+	//   become orphaned when their template is suspended or removed.
 	// Do NOT close beads (that's Phase 2).
 	for _, b := range existing {
 		sn := b.Metadata["session_name"]
@@ -169,7 +170,7 @@ func syncSessionBeads(
 		if b.Status == "closed" {
 			continue
 		}
-		if isConfigured(sn, configuredNames) {
+		if configuredNames[sn] {
 			// Still in config but not runnable (suspended/disabled).
 			if b.Metadata["state"] != "suspended" {
 				setMeta(store, b.ID, "state", "suspended", stderr) //nolint:errcheck
@@ -203,23 +204,6 @@ func setMeta(store beads.Store, id, key, value string, stderr io.Writer) error {
 		return err
 	}
 	return nil
-}
-
-// isConfigured checks whether a session name belongs to a configured agent.
-// Exact matches cover normal agents. For pool/multi instances (e.g.,
-// "city-worker-1"), we check if any configured template name is a prefix,
-// since instances are named by appending a suffix to the template session name.
-func isConfigured(sn string, configuredNames map[string]bool) bool {
-	if configuredNames[sn] {
-		return true
-	}
-	// Pool/multi instances: "city-worker-1" has template "city-worker".
-	for name := range configuredNames {
-		if strings.HasPrefix(sn, name+"-") {
-			return true
-		}
-	}
-	return false
 }
 
 // generateToken returns a cryptographically random hex token.
