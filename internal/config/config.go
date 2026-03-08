@@ -789,6 +789,11 @@ type DaemonConfig struct {
 	// files (e.g., aimux session paths). The default search path
 	// (~/.claude/projects/) is always included.
 	ObservePaths []string `toml:"observe_paths,omitempty"`
+	// BeadReconciler enables the bead-driven session reconciler (Phase 2f).
+	// When true, session lifecycle is managed through bead state with
+	// dependency-aware wake ordering, config drift detection, and crash
+	// quarantine. When false (default), the legacy reconciler is used.
+	BeadReconciler bool `toml:"bead_reconciler,omitempty"`
 }
 
 // PatrolIntervalDuration returns the patrol interval as a time.Duration.

@@ -232,6 +232,7 @@ DaemonConfig holds controller daemon settings.
 | `wisp_ttl` | string |  |  | WispTTL is how long a closed molecule survives before being purged. Duration string (e.g., "24h", "7d"). Wisp GC is disabled unless both WispGCInterval and WispTTL are set. |
 | `drift_drain_timeout` | string |  | `2m` | DriftDrainTimeout is the maximum time to wait for an agent to acknowledge a drain signal during a config-drift restart. If the agent doesn't ack within this window, the controller force-kills and restarts it. Duration string (e.g., "2m", "5m"). Defaults to "2m". |
 | `observe_paths` | []string |  |  | ObservePaths lists extra directories to search for Claude JSONL session files (e.g., aimux session paths). The default search path (~/.claude/projects/) is always included. |
+| `bead_reconciler` | boolean |  |  | BeadReconciler enables the bead-driven session reconciler (Phase 2f). When true, session lifecycle is managed through bead state with dependency-aware wake ordering, config drift detection, and crash quarantine. When false (default), the legacy reconciler is used. |
 
 ## DoltConfig
 

@@ -500,7 +500,7 @@ func doStart(args []string, controllerMode bool, stdout, stderr io.Writer) int {
 		}
 
 		cfgNames := configuredSessionNames(cfg, cityName)
-		idx := syncSessionBeads(store, agents, cfgNames, clock.Real{}, stderr)
+		idx := syncSessionBeads(store, agents, cfgNames, cfg, clock.Real{}, stderr, false)
 		if idx != nil {
 			bro := newBeadReconcileOps(rops, func() beads.Store { return store })
 			bro.updateIndex(idx)
@@ -517,7 +517,7 @@ func doStart(args []string, controllerMode bool, stdout, stderr io.Writer) int {
 	// because one-shot mode has no next tick to correct them.
 	if oneShotStore != nil {
 		cfgNames := configuredSessionNames(cfg, cityName)
-		syncSessionBeads(oneShotStore, buildAgents(cfg, sp), cfgNames, clock.Real{}, stderr)
+		syncSessionBeads(oneShotStore, buildAgents(cfg, sp), cfgNames, cfg, clock.Real{}, stderr, false)
 	}
 	if code == 0 {
 		fmt.Fprintln(stdout, "City started.") //nolint:errcheck // best-effort stdout

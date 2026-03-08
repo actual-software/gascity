@@ -19,7 +19,7 @@ func setupBeadReconcileOps(t *testing.T, agents []agent.Agent) (*beadReconcileOp
 	clk := &clock.Fake{Time: time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC)}
 
 	var stderr bytes.Buffer
-	idx := syncSessionBeads(store, agents, allConfigured(agents), clk, &stderr)
+	idx := syncSessionBeads(store, agents, allConfigured(agents), nil, clk, &stderr, false)
 	if stderr.Len() > 0 {
 		t.Fatalf("unexpected stderr from syncSessionBeads: %s", stderr.String())
 	}
@@ -254,7 +254,7 @@ func TestBeadReconcileOps_IndexUpdateAfterResync(t *testing.T) {
 	}
 
 	var stderr bytes.Buffer
-	idx1 := syncSessionBeads(store, agents, allConfigured(agents), clk, &stderr)
+	idx1 := syncSessionBeads(store, agents, allConfigured(agents), nil, clk, &stderr, false)
 
 	provider := newFakeReconcileOps()
 	provider.running["mayor"] = true
@@ -269,7 +269,7 @@ func TestBeadReconcileOps_IndexUpdateAfterResync(t *testing.T) {
 	// Suspend the agent (bead gets closed).
 	clk.Advance(5 * time.Second)
 	configuredNames := map[string]bool{"mayor": true}
-	idx2 := syncSessionBeads(store, nil, configuredNames, clk, &stderr)
+	idx2 := syncSessionBeads(store, nil, configuredNames, nil, clk, &stderr, false)
 	bro.updateIndex(idx2)
 
 	// Mayor bead is now closed — no index entry, falls back to provider
@@ -282,7 +282,7 @@ func TestBeadReconcileOps_IndexUpdateAfterResync(t *testing.T) {
 
 	// Resume — new bead created.
 	clk.Advance(5 * time.Second)
-	idx3 := syncSessionBeads(store, agents, allConfigured(agents), clk, &stderr)
+	idx3 := syncSessionBeads(store, agents, allConfigured(agents), nil, clk, &stderr, false)
 	bro.updateIndex(idx3)
 
 	// New bead has no started_config_hash yet — falls back to provider
