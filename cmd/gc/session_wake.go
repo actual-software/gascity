@@ -147,8 +147,10 @@ func advanceSessionDrains(
 		}
 
 		// Cancelation check: if wake reasons reappeared, cancel drain.
-		// Config-drift drains are NOT cancelable — the config changed.
-		if ds.reason != "config-drift" {
+		// Config-drift, orphaned, and suspended drains are NOT cancelable —
+		// they represent explicit lifecycle decisions that should not be
+		// reversed by the wake contract (the session is leaving the desired set).
+		if ds.reason != "config-drift" && ds.reason != "orphaned" && ds.reason != "suspended" {
 			reasons := wakeReasons(*session, cfg, sp, poolDesired, clk)
 			if len(reasons) > 0 {
 				dt.remove(id)

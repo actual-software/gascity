@@ -109,13 +109,18 @@ func allDependenciesAlive(
 // called before this function). When the bead reconciler is active,
 // syncSessionBeads does NOT close orphan/suspended beads (skipClose=true),
 // so the sessions slice may include beads with no matching agent. These
-// are handled by the orphan drain phase.
+// are handled by the orphan/suspended drain phase.
+//
+// configuredNames is the set of ALL configured agent session names (including
+// suspended agents). Used to distinguish "orphaned" (removed from config)
+// from "suspended" (still in config, not runnable) when closing beads.
 //
 // Returns the number of sessions woken this tick.
 func reconcileSessionBeads(
 	ctx context.Context,
 	sessions []beads.Bead,
 	agentIndex map[string]agent.Agent,
+	configuredNames map[string]bool,
 	cfg *config.City,
 	sp runtime.Provider,
 	store beads.Store,
@@ -125,6 +130,7 @@ func reconcileSessionBeads(
 	clk clock.Clock,
 	rec events.Recorder,
 	startupTimeout time.Duration,
+	driftDrainTimeout time.Duration,
 	stdout, stderr io.Writer,
 ) int {
 	deps := buildDepsMap(cfg)
@@ -152,7 +158,33 @@ func reconcileSessionBeads(
 		session := &ordered[i]
 		name := session.Metadata["session_name"]
 		a := agentIndex[name]
-		alive := a != nil && a.IsRunning()
+
+		// Orphan/suspended: bead exists but no agent in desired set.
+		// Handle BEFORE heal/stability to avoid false crash detection —
+		// a running session that leaves the desired set is not a crash.
+		if a == nil {
+			providerAlive := sp.IsRunning(name)
+			// Heal state using provider liveness, not agent membership.
+			healState(session, providerAlive, store)
+			if providerAlive {
+				reason := "orphaned"
+				if configuredNames[name] {
+					reason = "suspended"
+				}
+				beginSessionDrain(*session, sp, dt, reason, clk, defaultDrainTimeout)
+				fmt.Fprintf(stdout, "Draining session '%s': %s\n", name, reason) //nolint:errcheck
+			} else {
+				// Not running and no agent — close the bead.
+				reason := "orphaned"
+				if configuredNames[name] {
+					reason = "suspended"
+				}
+				closeBead(store, session.ID, reason, clk.Now().UTC(), stderr)
+			}
+			continue
+		}
+
+		alive := a.IsRunning()
 
 		// Heal advisory state metadata.
 		healState(session, alive, store)
@@ -168,7 +200,7 @@ func reconcileSessionBeads(
 		}
 
 		// Config drift: if alive and config changed, drain for restart.
-		if alive && a != nil {
+		if alive {
 			template := session.Metadata["template"]
 			storedHash := session.Metadata["config_hash"]
 			if template != "" && storedHash != "" {
@@ -176,7 +208,11 @@ func reconcileSessionBeads(
 				if cfgAgent != nil {
 					currentHash := runtime.CoreFingerprint(a.SessionConfig())
 					if storedHash != currentHash {
-						beginSessionDrain(*session, sp, dt, "config-drift", clk, defaultDrainTimeout)
+						ddt := driftDrainTimeout
+						if ddt <= 0 {
+							ddt = defaultDrainTimeout
+						}
+						beginSessionDrain(*session, sp, dt, "config-drift", clk, ddt)
 						fmt.Fprintf(stdout, "Draining session '%s': config-drift\n", name) //nolint:errcheck
 						rec.Record(events.Event{
 							Type:    events.AgentDraining,
@@ -188,21 +224,6 @@ func reconcileSessionBeads(
 					}
 				}
 			}
-		}
-
-		// Orphan/suspended: bead exists but no agent in desired set.
-		// These beads are kept open (skipClose=true in syncSessionBeads)
-		// so we can drain the running session first.
-		if a == nil {
-			if sp.IsRunning(name) {
-				reason := "orphaned"
-				beginSessionDrain(*session, sp, dt, reason, clk, defaultDrainTimeout)
-				fmt.Fprintf(stdout, "Draining session '%s': %s\n", name, reason) //nolint:errcheck
-			} else {
-				// Not running and no agent — close the bead.
-				closeBead(store, session.ID, "orphaned", clk.Now().UTC(), stderr)
-			}
-			continue
 		}
 
 		// Compute wake reasons using the full contract (includes held_until,

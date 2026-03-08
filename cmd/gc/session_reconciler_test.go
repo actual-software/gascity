@@ -89,10 +89,11 @@ func (e *reconcilerTestEnv) createSessionBead(name, template string) beads.Bead 
 }
 
 func (e *reconcilerTestEnv) reconcile(sessions []beads.Bead) int {
+	cfgNames := configuredSessionNames(e.cfg, "")
 	return reconcileSessionBeads(
-		context.Background(), sessions, e.agentIndex, e.cfg, e.sp,
+		context.Background(), sessions, e.agentIndex, cfgNames, e.cfg, e.sp,
 		e.store, e.dt, map[string]int{}, "",
-		e.clk, e.rec, 0, &e.stdout, &e.stderr,
+		e.clk, e.rec, 0, 0, &e.stdout, &e.stderr,
 	)
 }
 
@@ -454,10 +455,51 @@ func TestReconcileSessionBeads_OrphanNotRunningClosed(t *testing.T) {
 
 	env.reconcile([]beads.Bead{session})
 
-	// Bead should be closed.
+	// Bead should be closed with "orphaned" reason.
 	b, _ := env.store.Get(session.ID)
 	if b.Status != "closed" {
 		t.Errorf("orphan bead status = %q, want closed", b.Status)
+	}
+	if b.Metadata["close_reason"] != "orphaned" {
+		t.Errorf("close_reason = %q, want %q", b.Metadata["close_reason"], "orphaned")
+	}
+}
+
+func TestReconcileSessionBeads_SuspendedSessionDrained(t *testing.T) {
+	env := newReconcilerTestEnv()
+	// "worker" is in config (configuredNames) but NOT in agentIndex (suspended).
+	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
+	// Session is running in provider but no agent in desired set.
+	_ = env.sp.Start(context.Background(), "worker", runtime.Config{})
+	session := env.createSessionBead("worker", "worker")
+
+	env.reconcile([]beads.Bead{session})
+
+	// Should drain with "suspended" reason (in config, not in desired set).
+	ds := env.dt.get(session.ID)
+	if ds == nil {
+		t.Fatal("expected drain for suspended session")
+	}
+	if ds.reason != "suspended" {
+		t.Errorf("drain reason = %q, want %q", ds.reason, "suspended")
+	}
+}
+
+func TestReconcileSessionBeads_SuspendedNotRunningClosed(t *testing.T) {
+	env := newReconcilerTestEnv()
+	// "worker" is in config but NOT in agentIndex and NOT running.
+	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
+	session := env.createSessionBead("worker", "worker")
+
+	env.reconcile([]beads.Bead{session})
+
+	// Bead should be closed with "suspended" reason.
+	b, _ := env.store.Get(session.ID)
+	if b.Status != "closed" {
+		t.Errorf("suspended bead status = %q, want closed", b.Status)
+	}
+	if b.Metadata["close_reason"] != "suspended" {
+		t.Errorf("close_reason = %q, want %q", b.Metadata["close_reason"], "suspended")
 	}
 }
 
@@ -580,6 +622,57 @@ func TestReconcileSessionBeads_CancelsDrainOnWakeReason(t *testing.T) {
 	// Drain should be canceled because the agent is in the desired set.
 	if ds := env.dt.get(session.ID); ds != nil {
 		t.Errorf("drain should be canceled, got %+v", ds)
+	}
+}
+
+func TestAllDependenciesAlive_WithSessionTemplate(t *testing.T) {
+	// Verify that SessionTemplate is used consistently in session name
+	// computation for dependency lookups.
+	session := beads.Bead{Metadata: map[string]string{"template": "worker"}}
+	cfg := &config.City{
+		Workspace: config.Workspace{SessionTemplate: "{{.City}}-{{.Agent}}"},
+		Agents: []config.Agent{
+			{Name: "worker", DependsOn: []string{"db"}},
+			{Name: "db"},
+		},
+	}
+	// Agent indexed by the templated session name.
+	sn := agent.SessionNameFor("myCity", "db", "{{.City}}-{{.Agent}}")
+	agentIndex := map[string]agent.Agent{
+		sn: &agent.Fake{FakeName: "db", FakeSessionName: sn, Running: true},
+	}
+	if !allDependenciesAlive(session, cfg, agentIndex, "myCity") {
+		t.Errorf("dep should be alive (session name: %q)", sn)
+	}
+}
+
+func TestReconcileSessionBeads_DriftDrainUsesConfigTimeout(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{
+		Agents: []config.Agent{{Name: "worker"}},
+		Daemon: config.DaemonConfig{DriftDrainTimeout: "7m"},
+	}
+	a := env.addAgent("worker", true)
+	a.FakeSessionConfig = runtime.Config{Command: "new-cmd"}
+	session := env.createSessionBead("worker", "worker")
+
+	// Pass drift drain timeout from config.
+	cfgNames := configuredSessionNames(env.cfg, "")
+	reconcileSessionBeads(
+		context.Background(), []beads.Bead{session}, env.agentIndex, cfgNames,
+		env.cfg, env.sp, env.store, env.dt, map[string]int{}, "",
+		env.clk, env.rec, 0, env.cfg.Daemon.DriftDrainTimeoutDuration(),
+		&env.stdout, &env.stderr,
+	)
+
+	ds := env.dt.get(session.ID)
+	if ds == nil {
+		t.Fatal("expected drain for config drift")
+	}
+	// Drain deadline should be ~7 minutes from now, not the default.
+	expected := env.clk.Now().Add(7 * time.Minute)
+	if ds.deadline != expected {
+		t.Errorf("drain deadline = %v, want %v (7m from now)", ds.deadline, expected)
 	}
 }
 
