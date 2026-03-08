@@ -224,16 +224,17 @@ func TestAdoptionBarrier_PoolSlotDetection(t *testing.T) {
 
 	result, _ := runAdoptionBarrier(store, sp, cfg, "test-city", clock.Real{}, &stderr, true)
 	// Pool instance "worker-3" should resolve to config agent "worker"
-	// via resolvePoolBase, with pool slot 3.
+	// via resolvePoolBase, with pool slot 3. AgentName should be the
+	// expanded instance name "worker-3" (matching syncSessionBeads).
 	found := false
 	for _, d := range result.Details {
-		if d.SessionName == "worker-3" && d.PoolSlot == 3 && d.AgentName == "worker" {
+		if d.SessionName == "worker-3" && d.PoolSlot == 3 && d.AgentName == "worker-3" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected detail with PoolSlot=3, AgentName=worker for worker-3, got %+v", result.Details)
+		t.Errorf("expected detail with PoolSlot=3, AgentName=worker-3 for worker-3, got %+v", result.Details)
 	}
 }
 
@@ -275,6 +276,33 @@ func TestParsePoolSlot(t *testing.T) {
 		got := parsePoolSlot(tt.name)
 		if got != tt.want {
 			t.Errorf("parsePoolSlot(%q) = %d, want %d", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestAdoptionBarrier_SingletonWithNumericSuffix(t *testing.T) {
+	store := beads.NewMemStore()
+	// Singleton agent named "db-node-1" — should NOT get pool_slot metadata.
+	sp := &fakeAdoptionProvider{running: []string{"db-node-1"}}
+	cfg := &config.City{
+		Agents: []config.Agent{
+			{Name: "db-node-1"}, // no Pool config
+		},
+	}
+	var stderr bytes.Buffer
+
+	result, passed := runAdoptionBarrier(store, sp, cfg, "test-city", clock.Real{}, &stderr, false)
+	if !passed {
+		t.Errorf("barrier should pass, stderr: %s", stderr.String())
+	}
+	if result.Adopted != 1 {
+		t.Errorf("Adopted = %d, want 1", result.Adopted)
+	}
+	// Verify no pool_slot on the bead.
+	beadList, _ := store.ListByLabel(sessionBeadLabel, 0)
+	for _, b := range beadList {
+		if b.Metadata["pool_slot"] != "" {
+			t.Errorf("singleton agent should not have pool_slot, got %q", b.Metadata["pool_slot"])
 		}
 	}
 }

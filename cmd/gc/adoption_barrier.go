@@ -121,10 +121,12 @@ func runAdoptionBarrier(
 		// instances by stripping the numeric suffix and matching the
 		// base template name (e.g., "city-worker-3" -> "worker").
 		cfgAgent, isConfigAgent := agentBySession[sessionName]
+		isPoolInstance := false
 		if !isConfigAgent {
 			if base := resolvePoolBase(sessionName, cityName, st, agentByQN); base != nil {
 				cfgAgent = base
 				isConfigAgent = true
+				isPoolInstance = true
 			}
 		}
 
@@ -140,18 +142,29 @@ func runAdoptionBarrier(
 		detail := adoptionDetail{SessionName: sessionName}
 
 		if isConfigAgent {
-			detail.AgentName = cfgAgent.QualifiedName()
-			meta["agent_name"] = cfgAgent.QualifiedName()
+			if isPoolInstance {
+				// For pool instances, reconstruct the instance name
+				// (e.g., "worker-3") to match what syncSessionBeads uses.
+				slot := parsePoolSlot(sessionName)
+				instanceName := fmt.Sprintf("%s-%d", cfgAgent.QualifiedName(), slot)
+				detail.AgentName = instanceName
+				meta["agent_name"] = instanceName
+			} else {
+				detail.AgentName = cfgAgent.QualifiedName()
+				meta["agent_name"] = cfgAgent.QualifiedName()
+			}
 		} else {
 			detail.AgentName = sessionName
 			meta["agent_name"] = sessionName
 		}
 
 		// Detect pool instances from session name suffix.
-		if slot := parsePoolSlot(sessionName); slot > 0 {
+		// Only set pool_slot metadata when the agent is actually a pool agent,
+		// to avoid false positives on singleton agents whose names end in numbers.
+		if slot := parsePoolSlot(sessionName); slot > 0 && isConfigAgent && cfgAgent.Pool != nil {
 			detail.PoolSlot = slot
 			meta["pool_slot"] = strconv.Itoa(slot)
-			if isConfigAgent && cfgAgent.Pool != nil && slot > cfgAgent.Pool.Max {
+			if slot > cfgAgent.Pool.Max {
 				detail.OutOfBounds = true
 				fmt.Fprintf(stderr, "adoption barrier: %s pool slot %d exceeds max %d (adopt-then-drain)\n", //nolint:errcheck
 					sessionName, slot, cfgAgent.Pool.Max)

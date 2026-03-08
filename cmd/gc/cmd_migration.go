@@ -58,9 +58,7 @@ func runMigrationPlan(stdout, stderr io.Writer) error {
 
 	store, err := openCityStoreAt(cityPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "Warning: bead store unavailable: %v\n", err)       //nolint:errcheck
-		fmt.Fprintln(stdout, "Cannot run migration plan without a bead store.") //nolint:errcheck
-		return nil
+		return fmt.Errorf("bead store unavailable: %w", err)
 	}
 
 	result, passed := runAdoptionBarrier(store, sp, cfg, cityName, clock.Real{}, stderr, true)
