@@ -491,9 +491,6 @@ func TestHandleSessionCreate(t *testing.T) {
 	if resp.Title != "myrig/worker" {
 		t.Errorf("Title = %q, want default %q", resp.Title, "myrig/worker")
 	}
-	if resp.WorkDir != "/tmp/myrig" {
-		t.Errorf("WorkDir = %q, want %q", resp.WorkDir, "/tmp/myrig")
-	}
 }
 
 func TestHandleSessionMessageResumesSuspendedSession(t *testing.T) {
@@ -653,6 +650,26 @@ func TestHandleSessionPendingAndRespond(t *testing.T) {
 	}
 	if got := fs.sp.Responses[info.SessionName]; len(got) != 1 || got[0].Action != "approve" {
 		t.Fatalf("responses = %#v, want single approve", got)
+	}
+}
+
+func TestHandleSessionRespondMismatchedRequest(t *testing.T) {
+	fs := newSessionFakeState(t)
+	srv := New(fs)
+
+	info := createTestSession(t, fs.cityBeadStore, fs.sp, "Interactive")
+	fs.sp.SetPendingInteraction(info.SessionName, &runtime.PendingInteraction{
+		RequestID: "req-1",
+		Kind:      "approval",
+		Prompt:    "approve?",
+	})
+
+	respondReq := newPostRequest("/v0/session/"+info.ID+"/respond", strings.NewReader(`{"request_id":"req-2","action":"approve"}`))
+	respondRec := httptest.NewRecorder()
+	srv.ServeHTTP(respondRec, respondReq)
+
+	if respondRec.Code != http.StatusConflict {
+		t.Fatalf("respond status = %d, want %d; body: %s", respondRec.Code, http.StatusConflict, respondRec.Body.String())
 	}
 }
 

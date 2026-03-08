@@ -18,6 +18,7 @@ type Provider struct {
 }
 
 var _ runtime.Provider = (*Provider)(nil)
+var _ runtime.InteractionProvider = (*Provider)(nil)
 
 // New creates a hybrid provider. isRemote returns true for sessions
 // that should be managed by the remote provider.
@@ -70,6 +71,24 @@ func (p *Provider) ProcessAlive(name string, processNames []string) bool {
 // Nudge delegates to the routed backend.
 func (p *Provider) Nudge(name, message string) error {
 	return p.route(name).Nudge(name, message)
+}
+
+// Pending delegates to the routed backend when it supports structured
+// interactions.
+func (p *Provider) Pending(name string) (*runtime.PendingInteraction, error) {
+	if ip, ok := p.route(name).(runtime.InteractionProvider); ok {
+		return ip.Pending(name)
+	}
+	return nil, runtime.ErrInteractionUnsupported
+}
+
+// Respond delegates to the routed backend when it supports structured
+// interactions.
+func (p *Provider) Respond(name string, response runtime.InteractionResponse) error {
+	if ip, ok := p.route(name).(runtime.InteractionProvider); ok {
+		return ip.Respond(name, response)
+	}
+	return runtime.ErrInteractionUnsupported
 }
 
 // SetMeta delegates to the routed backend.

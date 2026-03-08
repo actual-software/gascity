@@ -2,6 +2,7 @@ package auto
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/runtime"
@@ -193,4 +194,45 @@ func TestStopCleansUpRoute(t *testing.T) {
 	if got := p.route("agent-z"); got != defaultSP {
 		t.Fatal("route should fall back to default after Stop")
 	}
+}
+
+func TestPendingAndRespondDelegateToRoutedBackend(t *testing.T) {
+	defaultSP := runtime.NewFake()
+	acpSP := runtime.NewFake()
+	p := New(defaultSP, acpSP)
+
+	p.RouteACP("interactive-agent")
+	_ = acpSP.Start(context.Background(), "interactive-agent", runtime.Config{})
+	acpSP.SetPendingInteraction("interactive-agent", &runtime.PendingInteraction{RequestID: "req-1"})
+
+	pending, err := p.Pending("interactive-agent")
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if pending == nil || pending.RequestID != "req-1" {
+		t.Fatalf("Pending = %#v, want req-1", pending)
+	}
+	if err := p.Respond("interactive-agent", runtime.InteractionResponse{RequestID: "req-1", Action: "approve"}); err != nil {
+		t.Fatalf("Respond: %v", err)
+	}
+	if got := acpSP.Responses["interactive-agent"]; len(got) != 1 || got[0].Action != "approve" {
+		t.Fatalf("Responses = %#v, want single approve", got)
+	}
+}
+
+func TestPendingUnsupportedWhenBackendLacksInteractionSupport(t *testing.T) {
+	defaultSP := runtime.NewFake()
+	acpSP := &runtimeNoInteractionProvider{Provider: runtime.NewFake()}
+	p := New(defaultSP, acpSP)
+
+	p.RouteACP("plain-agent")
+
+	_, err := p.Pending("plain-agent")
+	if !errors.Is(err, runtime.ErrInteractionUnsupported) {
+		t.Fatalf("Pending error = %v, want ErrInteractionUnsupported", err)
+	}
+}
+
+type runtimeNoInteractionProvider struct {
+	runtime.Provider
 }

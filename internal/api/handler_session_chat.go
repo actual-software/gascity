@@ -117,6 +117,8 @@ func writeSessionManagerError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotImplemented, "unsupported", err.Error())
 	case errors.Is(err, session.ErrNoPendingInteraction):
 		writeError(w, http.StatusConflict, "no_pending", err.Error())
+	case errors.Is(err, session.ErrInteractionMismatch):
+		writeError(w, http.StatusConflict, "invalid_interaction", err.Error())
 	case errors.Is(err, session.ErrSessionClosed), errors.Is(err, session.ErrResumeRequired):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 	case errors.Is(err, session.ErrNotSession):

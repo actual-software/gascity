@@ -2,6 +2,7 @@ package exec //nolint:revive // internal package, always imported with alias
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -62,6 +63,24 @@ func TestStart(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
+	}
+}
+
+func TestStartWrapsDuplicateSessionError(t *testing.T) {
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	script := writeScript(t, dir, mockProviderScript(stateDir))
+	p := NewProvider(script)
+
+	if err := p.Start(context.Background(), "test-sess", runtime.Config{}); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	err := p.Start(context.Background(), "test-sess", runtime.Config{})
+	if !errors.Is(err, runtime.ErrSessionExists) {
+		t.Fatalf("Start error = %v, want ErrSessionExists", err)
 	}
 }
 

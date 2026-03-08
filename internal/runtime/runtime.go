@@ -15,6 +15,10 @@ import (
 // requested name.
 var ErrSessionExists = errors.New("session already exists")
 
+// ErrInteractionUnsupported reports that a provider does not implement the
+// structured pending/respond interaction capability for the requested session.
+var ErrInteractionUnsupported = errors.New("session interaction is unsupported")
+
 // Provider manages agent sessions. Implementations handle the details
 // of creating, destroying, and connecting to running agent processes.
 type Provider interface {

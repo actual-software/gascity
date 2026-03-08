@@ -85,6 +85,9 @@ func (p *Provider) runWithContext(parent context.Context, dur time.Duration, std
 		if errMsg == "" {
 			errMsg = err.Error()
 		}
+		if len(args) > 0 && args[0] == "start" && strings.Contains(strings.ToLower(errMsg), "already exists") {
+			return "", fmt.Errorf("%w: exec provider %s %s: %s", runtime.ErrSessionExists, p.script, strings.Join(args, " "), errMsg)
+		}
 		return "", fmt.Errorf("exec provider %s %s: %s", p.script, strings.Join(args, " "), errMsg)
 	}
 

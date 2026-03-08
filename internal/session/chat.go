@@ -26,6 +26,9 @@ var (
 	// ErrInteractionUnsupported reports that the backing runtime cannot
 	// surface or resolve structured pending interactions.
 	ErrInteractionUnsupported = errors.New("session provider does not support interactive responses")
+	// ErrInteractionMismatch reports that the response does not match the
+	// currently pending interaction request.
+	ErrInteractionMismatch = errors.New("pending interaction does not match request")
 )
 
 func sessionName(id string, b beads.Bead) string {
@@ -131,6 +134,9 @@ func (m *Manager) Pending(id string) (*runtime.PendingInteraction, bool, error) 
 	}
 	pending, err := ip.Pending(sessName)
 	if err != nil {
+		if errors.Is(err, runtime.ErrInteractionUnsupported) {
+			return nil, false, nil
+		}
 		return nil, true, fmt.Errorf("getting pending interaction: %w", err)
 	}
 	return pending, true, nil
@@ -148,6 +154,9 @@ func (m *Manager) Respond(id string, response runtime.InteractionResponse) error
 	}
 	pending, err := ip.Pending(sessName)
 	if err != nil {
+		if errors.Is(err, runtime.ErrInteractionUnsupported) {
+			return ErrInteractionUnsupported
+		}
 		return fmt.Errorf("getting pending interaction: %w", err)
 	}
 	if pending == nil {
@@ -160,9 +169,12 @@ func (m *Manager) Respond(id string, response runtime.InteractionResponse) error
 		return fmt.Errorf("interaction action is required")
 	}
 	if pending.RequestID != "" && response.RequestID != pending.RequestID {
-		return fmt.Errorf("pending interaction %q does not match request %q", pending.RequestID, response.RequestID)
+		return fmt.Errorf("%w: pending interaction %q does not match request %q", ErrInteractionMismatch, pending.RequestID, response.RequestID)
 	}
 	if err := ip.Respond(sessName, response); err != nil {
+		if errors.Is(err, runtime.ErrInteractionUnsupported) {
+			return ErrInteractionUnsupported
+		}
 		return fmt.Errorf("responding to pending interaction: %w", err)
 	}
 	return nil

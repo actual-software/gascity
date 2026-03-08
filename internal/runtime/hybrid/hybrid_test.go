@@ -2,6 +2,7 @@ package hybrid
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -138,4 +139,41 @@ func TestStop_RoutesCorrectly(t *testing.T) {
 	if remote.IsRunning("polecat-1") {
 		t.Error("polecat-1 should be stopped")
 	}
+}
+
+func TestPendingAndRespond_RouteToBackend(t *testing.T) {
+	local, remote := runtime.NewFake(), runtime.NewFake()
+	h := New(local, remote, isRemote)
+
+	_ = h.Start(context.Background(), "polecat-1", runtime.Config{})
+	remote.SetPendingInteraction("polecat-1", &runtime.PendingInteraction{RequestID: "req-1"})
+
+	pending, err := h.Pending("polecat-1")
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if pending == nil || pending.RequestID != "req-1" {
+		t.Fatalf("Pending = %#v, want req-1", pending)
+	}
+	if err := h.Respond("polecat-1", runtime.InteractionResponse{RequestID: "req-1", Action: "approve"}); err != nil {
+		t.Fatalf("Respond: %v", err)
+	}
+	if got := remote.Responses["polecat-1"]; len(got) != 1 || got[0].Action != "approve" {
+		t.Fatalf("Responses = %#v, want single approve", got)
+	}
+}
+
+func TestPendingUnsupportedWhenBackendLacksInteractionSupport(t *testing.T) {
+	local := &runtimeNoInteractionProvider{Provider: runtime.NewFake()}
+	remote := runtime.NewFake()
+	h := New(local, remote, isRemote)
+
+	_, err := h.Pending("refinery")
+	if !errors.Is(err, runtime.ErrInteractionUnsupported) {
+		t.Fatalf("Pending error = %v, want ErrInteractionUnsupported", err)
+	}
+}
+
+type runtimeNoInteractionProvider struct {
+	runtime.Provider
 }
