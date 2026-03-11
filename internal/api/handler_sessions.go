@@ -35,13 +35,12 @@ type sessionResponse struct {
 	Pool string `json:"pool,omitempty"`
 
 	// Enrichment fields for dashboard consumption.
-	Running         bool   `json:"running"`
-	ProcessActivity string `json:"process_activity,omitempty"` // "idle", "busy", or "" (stopped)
-	ActiveBead      string `json:"active_bead,omitempty"`
-	LastOutput      string `json:"last_output,omitempty"`
-	Model           string `json:"model,omitempty"`
-	ContextPct      *int   `json:"context_pct,omitempty"`
-	ContextWindow   *int   `json:"context_window,omitempty"`
+	Running       bool   `json:"running"`
+	ActiveBead    string `json:"active_bead,omitempty"`
+	LastOutput    string `json:"last_output,omitempty"`
+	Model         string `json:"model,omitempty"`
+	ContextPct    *int   `json:"context_pct,omitempty"`
+	ContextWindow *int   `json:"context_window,omitempty"`
 
 	// Activity indicates session turn state: "idle", "in-turn", or omitted.
 	Activity string `json:"activity,omitempty"`
@@ -362,12 +361,6 @@ func (s *Server) enrichSessionResponse(resp *sessionResponse, info session.Info,
 
 	resp.Running = sp.IsRunning(info.SessionName)
 
-	// Process activity detection: peek the last 2 lines and check for the
-	// ready prompt prefix. If the prompt is visible → idle; otherwise → busy.
-	if resp.Running {
-		resp.ProcessActivity = detectProcessActivity(sp, info.SessionName, info.Provider, cfg)
-	}
-
 	// Active bead: search rig stores for in_progress work assigned to this template.
 	resp.ActiveBead = s.findActiveBead(info.Template, "")
 
@@ -402,56 +395,6 @@ func (s *Server) enrichSessionResponse(resp *sessionResponse, info session.Info,
 			}
 		}
 	}
-}
-
-// detectProcessActivity peeks at the session's last output line to determine
-// whether the agent is idle (showing the ready prompt) or busy (generating
-// output). Returns "idle" or "busy".
-func detectProcessActivity(sp runtime.Provider, sessionName, providerName string, cfg *config.City) string {
-	prefix := readyPromptPrefixFor(providerName, cfg)
-	if prefix == "" {
-		// No prompt prefix known — can't distinguish. Default to idle since
-		// the process is running but we have no evidence of activity.
-		return "idle"
-	}
-
-	output, err := sp.Peek(sessionName, 2)
-	if err != nil || output == "" {
-		return "idle"
-	}
-
-	// Check the last non-empty line for the prompt prefix.
-	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		if strings.Contains(line, prefix) {
-			return "idle"
-		}
-		return "busy"
-	}
-	return "idle"
-}
-
-// readyPromptPrefixFor returns the ReadyPromptPrefix for the given provider
-// name by looking up city overrides then built-in presets.
-func readyPromptPrefixFor(providerName string, cfg *config.City) string {
-	if providerName == "" {
-		return ""
-	}
-	// City-level override.
-	if cfg != nil {
-		if spec, ok := cfg.Providers[providerName]; ok && spec.ReadyPromptPrefix != "" {
-			return spec.ReadyPromptPrefix
-		}
-	}
-	// Built-in preset.
-	if spec, ok := config.BuiltinProviders()[providerName]; ok {
-		return spec.ReadyPromptPrefix
-	}
-	return ""
 }
 
 // handleSessionPatch handles PATCH /v0/session/{id}. Only title is mutable.
