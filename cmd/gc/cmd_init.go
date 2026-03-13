@@ -13,6 +13,7 @@ import (
 	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/hooks"
 	"github.com/gastownhall/gascity/internal/overlay"
+	"github.com/gastownhall/gascity/internal/supervisor"
 	"github.com/spf13/cobra"
 )
 
@@ -257,6 +258,7 @@ func cmdInit(args []string, providerFlag, bootstrapProfileFlag string, stdout, s
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	autoRegister(cityPath, cityName, stdout, stderr)
 	return 0
 }
 
@@ -401,6 +403,7 @@ func cmdInitFromTOMLFile(fs fsys.FS, tomlSrc, cityPath string, stdout, stderr io
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	autoRegister(cityPath, cityName, stdout, stderr)
 	return 0
 }
 
@@ -708,5 +711,18 @@ func doInitFromDir(srcDir, cityPath string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	autoRegister(cityPath, cityName, stdout, stderr)
 	return 0
+}
+
+// autoRegister registers the city with the machine-wide supervisor registry.
+// This is best-effort: the city works fine without registration. Registration
+// means a running supervisor will pick it up on its next patrol tick (~10s).
+func autoRegister(cityPath, cityName string, stdout, stderr io.Writer) {
+	reg := supervisor.NewRegistry(supervisor.RegistryPath())
+	if err := reg.Register(cityPath, cityName); err != nil {
+		fmt.Fprintf(stderr, "gc init: note: auto-register failed: %v\n", err) //nolint:errcheck
+		return
+	}
+	fmt.Fprintf(stdout, "Registered city '%s' with supervisor.\n", cityName) //nolint:errcheck
 }
