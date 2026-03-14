@@ -133,6 +133,7 @@ func TestControllerShutdown(t *testing.T) {
 
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test"},
+		Beads:     config.BeadsConfig{Provider: "file"},
 		Agents:    []config.Agent{{Name: "mayor", StartCommand: "echo hello"}},
 		Daemon:    config.DaemonConfig{ShutdownTimeout: "0s"},
 	}
@@ -172,6 +173,7 @@ func writeCityTOML(t *testing.T, dir string, cityName string, agentNames ...stri
 	tomlPath := filepath.Join(dir, "city.toml")
 	var buf bytes.Buffer
 	buf.WriteString("[workspace]\nname = " + `"` + cityName + `"` + "\n\n")
+	buf.WriteString("[beads]\nprovider = \"file\"\n\n")
 	for _, name := range agentNames {
 		buf.WriteString("[[agent]]\nname = " + `"` + name + `"` + "\n")
 		buf.WriteString("start_command = \"echo hello\"\n\n")
@@ -432,7 +434,10 @@ func TestControllerPokeTriggersImmediate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := &config.City{Workspace: config.Workspace{Name: "test"}}
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test"},
+		Beads:     config.BeadsConfig{Provider: "file"},
+	}
 	var stdout, stderr bytes.Buffer
 
 	done := make(chan int, 1)

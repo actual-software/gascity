@@ -111,6 +111,9 @@ func knownTOMLKeys() []string {
 		reflect.TypeOf(AutomationsConfig{}),
 		reflect.TypeOf(APIConfig{}),
 		reflect.TypeOf(ConvergenceConfig{}),
+		reflect.TypeOf(Service{}),
+		reflect.TypeOf(ServiceWorkflowConfig{}),
+		reflect.TypeOf(ServiceProxyProcessConfig{}),
 		reflect.TypeOf(AgentDefaults{}),
 	}
 	for _, t := range types {

@@ -16,6 +16,7 @@ import (
 	"github.com/gastownhall/gascity/internal/mail"
 	"github.com/gastownhall/gascity/internal/mail/beadmail"
 	"github.com/gastownhall/gascity/internal/runtime"
+	"github.com/gastownhall/gascity/internal/workspacesvc"
 )
 
 // newPostRequest creates a POST httptest request with the X-GC-Request header
@@ -40,6 +41,7 @@ type fakeState struct {
 	startedAt     time.Time
 	quarantined   map[string]bool
 	autos         []automations.Automation
+	services      workspacesvc.Registry
 }
 
 func newFakeState(t *testing.T) *fakeState {
@@ -85,6 +87,8 @@ func (f *fakeState) ClearCrashHistory(sessionName string)    { delete(f.quaranti
 func (f *fakeState) CityBeadStore() beads.Store              { return f.cityBeadStore }
 func (f *fakeState) Automations() []automations.Automation   { return f.autos }
 func (f *fakeState) Poke()                                   {} // no-op in tests
+func (f *fakeState) ServiceRegistry() workspacesvc.Registry  { return f.services }
+
 func (f *fakeState) RawConfig() *config.City {
 	if f.rawCfg != nil {
 		return f.rawCfg

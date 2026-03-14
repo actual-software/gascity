@@ -845,6 +845,9 @@ func prepareCityForSupervisor(cityPath, cityName string, cfg *config.City, stder
 	if err := config.ValidateRigs(cfg.Rigs, cityName); err != nil {
 		return fmt.Errorf("validate rigs: %w", err)
 	}
+	if err := config.ValidateServices(cfg.Services); err != nil {
+		return fmt.Errorf("validate services: %w", err)
+	}
 
 	// Materialize the gc-beads-bd script.
 	if _, err := MaterializeBeadsBdScript(cityPath); err != nil {

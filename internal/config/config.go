@@ -78,6 +78,9 @@ type City struct {
 	ChatSessions ChatSessionsConfig `toml:"chat_sessions,omitempty"`
 	// Convergence configures convergence loop limits.
 	Convergence ConvergenceConfig `toml:"convergence,omitempty"`
+	// Services declares workspace-owned HTTP services mounted on the
+	// controller edge under /svc/{name}.
+	Services []Service `toml:"service,omitempty"`
 	// AgentDefaults provides default values applied to all agents that
 	// don't override them. Useful for setting city-wide model, wake_mode,
 	// and overlay allowlists.

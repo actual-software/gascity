@@ -23,6 +23,7 @@ const currentPackSchema = 1
 type packConfig struct {
 	Pack      PackMeta                `toml:"pack"`
 	Agents    []Agent                 `toml:"agent"`
+	Services  []Service               `toml:"service,omitempty"`
 	Providers map[string]ProviderSpec `toml:"providers,omitempty"`
 	Formulas  FormulasConfig          `toml:"formulas,omitempty"`
 	Patches   Patches                 `toml:"patches,omitempty"`
@@ -62,9 +63,12 @@ func ExpandPacks(cfg *City, fs fsys.FS, cityRoot string, rigFormulaDirs map[stri
 			}
 			topoPath := filepath.Join(topoDir, packFile)
 
-			agents, providers, topoDirs, reqs, globals, err := loadPack(fs, topoPath, topoDir, cityRoot, rig.Name, nil)
+			agents, providers, services, topoDirs, reqs, globals, err := loadPack(fs, topoPath, topoDir, cityRoot, rig.Name, nil)
 			if err != nil {
 				return fmt.Errorf("rig %q pack %q: %w", rig.Name, ref, err)
+			}
+			if len(services) > 0 {
+				return fmt.Errorf("rig %q pack %q: [[service]] is only allowed in city-scoped packs", rig.Name, ref)
 			}
 			rigGlobals = append(rigGlobals, globals...)
 
@@ -206,12 +210,13 @@ func ExpandCityPacks(cfg *City, fs fsys.FS, cityRoot string) ([]string, []PackRe
 		}
 		topoPath := filepath.Join(topoDir, packFile)
 
-		agents, providers, topoDirs, reqs, globals, err := loadPack(fs, topoPath, topoDir, cityRoot, "", nil)
+		agents, providers, services, topoDirs, reqs, globals, err := loadPack(fs, topoPath, topoDir, cityRoot, "", nil)
 		if err != nil {
 			return nil, nil, fmt.Errorf("city pack %q: %w", ref, err)
 		}
 		allRequires = append(allRequires, reqs...)
 		allGlobals = append(allGlobals, globals...)
+		cfg.Services = append(cfg.Services, services...)
 
 		// Accumulate pack dirs (deduped).
 		allPackDirs = appendUnique(allPackDirs, topoDirs...)
@@ -425,7 +430,7 @@ func checkPackAgentCollisions(agents []Agent, rigName string) error {
 // Pass nil for the initial call; it will be initialized automatically.
 // Includes are processed recursively: included agents come first (base
 // layer), then the parent's own agents (override layer).
-func loadPack(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, seen map[string]bool) ([]Agent, map[string]ProviderSpec, []string, []PackRequirement, []ResolvedPackGlobal, error) {
+func loadPack(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, seen map[string]bool) ([]Agent, map[string]ProviderSpec, []Service, []string, []PackRequirement, []ResolvedPackGlobal, error) {
 	// Initialize seen set on first call.
 	if seen == nil {
 		seen = make(map[string]bool)
@@ -437,27 +442,28 @@ func loadPack(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, seen map[
 		absTopoDir = topoDir
 	}
 	if seen[absTopoDir] {
-		return nil, nil, nil, nil, nil, fmt.Errorf("cycle detected: pack %q already visited", topoDir)
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf("cycle detected: pack %q already visited", topoDir)
 	}
 	seen[absTopoDir] = true
 
 	data, err := fs.ReadFile(topoPath)
 	if err != nil {
-		return nil, nil, nil, nil, nil, fmt.Errorf("loading %s: %w", packFile, err)
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf("loading %s: %w", packFile, err)
 	}
 
 	var tc packConfig
 	if _, err := toml.Decode(string(data), &tc); err != nil {
-		return nil, nil, nil, nil, nil, fmt.Errorf("parsing %s: %w", packFile, err)
+		return nil, nil, nil, nil, nil, nil, fmt.Errorf("parsing %s: %w", packFile, err)
 	}
 
 	if err := validatePackMeta(&tc.Pack); err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	// Process includes: accumulate base-layer agents, providers,
 	// pack dirs, requirements, and globals from included packs.
 	var includedAgents []Agent
+	var includedServices []Service
 	var includedTopoDirs []string
 	var allRequires []PackRequirement
 	var includedGlobals []ResolvedPackGlobal
@@ -466,17 +472,18 @@ func loadPack(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, seen map[
 	for _, inc := range tc.Pack.Includes {
 		incTopoDir, err := resolvePackRef(inc, topoDir, cityRoot)
 		if err != nil {
-			return nil, nil, nil, nil, nil, fmt.Errorf("include %q: %w", inc, err)
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("include %q: %w", inc, err)
 		}
 
 		incTopoPath := filepath.Join(incTopoDir, packFile)
-		incAgents, incProviders, incTopoDirs, incReqs, incGlobals, err := loadPack(
+		incAgents, incProviders, incServices, incTopoDirs, incReqs, incGlobals, err := loadPack(
 			fs, incTopoPath, incTopoDir, cityRoot, rigName, seen)
 		if err != nil {
-			return nil, nil, nil, nil, nil, fmt.Errorf("include %q: %w", inc, err)
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("include %q: %w", inc, err)
 		}
 
 		includedAgents = append(includedAgents, incAgents...)
+		includedServices = append(includedServices, incServices...)
 		includedTopoDirs = append(includedTopoDirs, incTopoDirs...)
 		allRequires = append(allRequires, incReqs...)
 		includedGlobals = append(includedGlobals, incGlobals...)
@@ -508,13 +515,13 @@ func loadPack(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, seen map[
 		}
 		for _, ca := range tc.Pack.CityAgents {
 			if !allAgentNames[ca] {
-				return nil, nil, nil, nil, nil, fmt.Errorf("city_agents: agent %q not found in pack", ca)
+				return nil, nil, nil, nil, nil, nil, fmt.Errorf("city_agents: agent %q not found in pack", ca)
 			}
 		}
 		// Stamp scope on parent agents.
 		for i := range tc.Agents {
 			if tc.Agents[i].Scope == "rig" && cityAgentSet[tc.Agents[i].Name] {
-				return nil, nil, nil, nil, nil, fmt.Errorf(
+				return nil, nil, nil, nil, nil, nil, fmt.Errorf(
 					"agent %q: scope=\"rig\" conflicts with city_agents listing", tc.Agents[i].Name)
 			}
 			if tc.Agents[i].Scope == "" {
@@ -563,14 +570,30 @@ func loadPack(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, seen map[
 		}
 	}
 
+	services := make([]Service, len(tc.Services))
+	copy(services, tc.Services)
+	for i := range services {
+		services[i].SourceDir = topoDir
+		if services[i].DesiredHostname != "" {
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("service %q: packs may not set desired_hostname", services[i].Name)
+		}
+		if services[i].StateRoot != "" {
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("service %q: packs may not override state_root", services[i].Name)
+		}
+		if services[i].PublishMode == "direct" {
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("service %q: packs may not set publish_mode=direct", services[i].Name)
+		}
+	}
+
 	// Merge: included agents first (base), then parent agents (override).
 	includedAgents = append(includedAgents, agents...)
+	includedServices = append(includedServices, services...)
 
 	// Apply pack-level patches to the merged agent list.
 	if !tc.Patches.IsEmpty() {
 		adjustPackPatchPaths(&tc.Patches, topoDir, cityRoot)
 		if err := applyPackAgentPatches(includedAgents, tc.Patches.Agents); err != nil {
-			return nil, nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, nil, err
 		}
 	}
 
@@ -617,7 +640,7 @@ func loadPack(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, seen map[
 		})
 	}
 
-	return includedAgents, mergedProviders, topoDirs, allRequires, allGlobals, nil
+	return includedAgents, mergedProviders, includedServices, topoDirs, allRequires, allGlobals, nil
 }
 
 // applyPackGlobals appends [global].session_live commands from packs
@@ -1001,7 +1024,7 @@ func PackDefinesAgent(fs fsys.FS, packRef, cityRoot, agentName string) bool {
 	}
 	topoPath := filepath.Join(topoDir, packFile)
 
-	agents, _, _, _, _, err := loadPack(fs, topoPath, topoDir, cityRoot, "", nil)
+	agents, _, _, _, _, _, err := loadPack(fs, topoPath, topoDir, cityRoot, "", nil)
 	if err != nil {
 		return false
 	}

@@ -382,6 +382,7 @@ func TestControllerSocketPing(t *testing.T) {
 
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test"},
+		Beads:     config.BeadsConfig{Provider: "file"},
 		Agents:    []config.Agent{{Name: "worker", StartCommand: "echo hi"}},
 		Daemon:    config.DaemonConfig{ShutdownTimeout: "0s"},
 	}

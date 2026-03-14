@@ -268,6 +268,9 @@ func tryReloadConfig(tomlPath, lockedCityName, cityRoot string, stderr io.Writer
 	if err := config.ValidateAgents(newCfg.Agents); err != nil {
 		return nil, fmt.Errorf("validating agents: %w", err)
 	}
+	if err := config.ValidateServices(newCfg.Services); err != nil {
+		return nil, fmt.Errorf("validating services: %w", err)
+	}
 	newName := newCfg.Workspace.Name
 	if newName == "" {
 		newName = filepath.Base(filepath.Dir(tomlPath))
@@ -549,6 +552,7 @@ func runController(
 		cs := newControllerState(cfg, sp, eventProv, cityName, cityPath)
 		cs.ct = cr.crashTrack()
 		cs.pokeCh = pokeCh
+		cs.services = cr.svc
 		cr.setControllerState(cs)
 		bind := cfg.API.BindOrDefault()
 		nonLocal := bind != "127.0.0.1" && bind != "localhost" && bind != "::1"

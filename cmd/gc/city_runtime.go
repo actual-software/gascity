@@ -17,6 +17,7 @@ import (
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/gastownhall/gascity/internal/telemetry"
+	"github.com/gastownhall/gascity/internal/workspacesvc"
 )
 
 // CityRuntime holds all running state for a single city's reconciliation
@@ -42,6 +43,7 @@ type CityRuntime struct {
 
 	rec events.Recorder
 	cs  *controllerState // nil when API is disabled
+	svc *workspacesvc.Manager
 
 	poolSessions      map[string]time.Duration
 	poolDeathHandlers map[string]poolDeathInfo
@@ -116,7 +118,7 @@ func newCityRuntime(p CityRuntimeParams) *CityRuntime {
 		logPrefix = "gc start"
 	}
 
-	return &CityRuntime{
+	cr := &CityRuntime{
 		cityPath:          p.CityPath,
 		cityName:          p.CityName,
 		tomlPath:          p.TomlPath,
@@ -145,6 +147,9 @@ func newCityRuntime(p CityRuntimeParams) *CityRuntime {
 		stdout:    p.Stdout,
 		stderr:    p.Stderr,
 	}
+	cr.svc = workspacesvc.NewManager(&serviceRuntime{cr: cr})
+	_ = cr.svc.Reload()
+	return cr
 }
 
 // setControllerState sets the API state for this city. The controller
@@ -353,6 +358,10 @@ func (cr *CityRuntime) tick(
 		cr.ad.dispatch(ctx, cityRoot, time.Now())
 	}
 
+	if cr.svc != nil {
+		cr.svc.Tick(ctx, time.Now())
+	}
+
 	// Chat session auto-suspend: suspend detached idle sessions.
 	if idleTimeout := cr.cfg.ChatSessions.IdleTimeoutDuration(); idleTimeout > 0 {
 		autoSuspendChatSessions(cr.cityBeadStore(), cr.sp, idleTimeout, clock.Real{}, cr.stdout, cr.stderr)
@@ -480,6 +489,10 @@ func (cr *CityRuntime) reloadConfig(
 
 	cr.ad = buildAutomationDispatcher(cityRoot, cr.cfg, beads.ExecCommandRunner(), cr.rec, cr.stderr)
 
+	if cr.svc != nil {
+		_ = cr.svc.Reload()
+	}
+
 	if cr.cs != nil {
 		cr.cs.update(cr.cfg, cr.sp)
 		// Upgrade rops if store recovered from nil → non-nil.
@@ -600,6 +613,9 @@ func (cr *CityRuntime) cityBeadStore() beads.Store {
 // normal shutdown) — only the first call takes effect.
 func (cr *CityRuntime) shutdown() {
 	cr.shutdownOnce.Do(func() {
+		if cr.svc != nil {
+			_ = cr.svc.Close()
+		}
 		timeout := cr.cfg.Daemon.ShutdownTimeoutDuration()
 		if cr.rops != nil {
 			running, _ := cr.rops.listRunning("")

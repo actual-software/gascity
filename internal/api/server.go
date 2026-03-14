@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -90,11 +91,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handler() http.Handler {
-	inner := withCSRFCheck(s.mux)
+	apiInner := withCSRFCheck(s.mux)
 	if s.readOnly {
-		inner = withReadOnly(inner)
+		apiInner = withReadOnly(apiInner)
 	}
-	return withLogging(withRecovery(withRequestID(withCORS(inner))))
+	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/svc/") {
+			s.mux.ServeHTTP(w, r)
+			return
+		}
+		apiInner.ServeHTTP(w, r)
+	})
+	return withLogging(withRecovery(withRequestID(withCORS(root))))
 }
 
 // ListenAndServe starts the HTTP listener. Blocks until stopped.
@@ -255,4 +263,9 @@ func (s *Server) registerRoutes() {
 
 	// Sling (dispatch)
 	s.mux.HandleFunc("POST /v0/sling", s.handleSling)
+
+	// Workspace services
+	s.mux.HandleFunc("GET /v0/services", s.handleServiceList)
+	s.mux.HandleFunc("GET /v0/service/{name}", s.handleServiceGet)
+	s.mux.HandleFunc("/svc/", s.handleServiceProxy)
 }

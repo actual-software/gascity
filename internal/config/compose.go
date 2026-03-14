@@ -209,6 +209,9 @@ func mergeFragment(base, fragment *City, fragMeta toml.MetaData, fragPath string
 	trackRigs(prov, fragment.Rigs, fragPath)
 	base.Rigs = append(base.Rigs, fragment.Rigs...)
 
+	// Services: concatenate.
+	base.Services = append(base.Services, fragment.Services...)
+
 	// Providers: deep-merge per-field.
 	mergeProviders(base, fragment, fragMeta, fragPath, prov)
 

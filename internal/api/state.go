@@ -14,6 +14,7 @@ import (
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/mail"
 	"github.com/gastownhall/gascity/internal/runtime"
+	"github.com/gastownhall/gascity/internal/workspacesvc"
 )
 
 // State provides read access to controller-managed state.
@@ -76,6 +77,10 @@ type State interface {
 	// waiting for the next patrol interval. Best-effort: no-op if poke
 	// is not available (e.g., in tests).
 	Poke()
+
+	// ServiceRegistry returns the workspace service registry, or nil when
+	// workspace services are not enabled for this city.
+	ServiceRegistry() workspacesvc.Registry
 }
 
 // AgentUpdate holds optional fields for a partial agent update. Pointer fields

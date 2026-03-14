@@ -818,6 +818,13 @@
           "$ref": "#/$defs/ConvergenceConfig",
           "description": "Convergence configures convergence loop limits."
         },
+        "service": {
+          "items": {
+            "$ref": "#/$defs/Service"
+          },
+          "type": "array",
+          "description": "Services declares workspace-owned HTTP services mounted on the\ncontroller edge under /svc/{name}."
+        },
         "agent_defaults": {
           "$ref": "#/$defs/AgentDefaults",
           "description": "AgentDefaults provides default values applied to all agents that\ndon't override them. Useful for setting city-wide model, wake_mode,\nand overlay allowlists."
@@ -1416,6 +1423,114 @@
         "name"
       ],
       "description": "RigPatch modifies an existing rig identified by Name."
+    },
+    "Service": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name is the unique service identifier within a workspace."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "workflow",
+            "proxy_process"
+          ],
+          "description": "Kind selects how the service is implemented."
+        },
+        "mount_path": {
+          "type": "string",
+          "description": "MountPath is the HTTP prefix served by the controller. Defaults to /svc/{name}."
+        },
+        "publish_mode": {
+          "type": "string",
+          "enum": [
+            "private",
+            "direct",
+            "relay"
+          ],
+          "description": "PublishMode declares how the service is intended to be published.\nv0 supports local/private and direct reuse of the API listener; relay\npublication is a future hosted slice."
+        },
+        "audience": {
+          "type": "string",
+          "enum": [
+            "operator",
+            "tenant",
+            "public"
+          ],
+          "description": "Audience describes the intended caller class."
+        },
+        "auth_mode": {
+          "type": "string",
+          "enum": [
+            "none",
+            "bearer",
+            "shared_secret",
+            "github_hmac",
+            "delegated"
+          ],
+          "description": "AuthMode selects the expected caller proof model."
+        },
+        "desired_hostname": {
+          "type": "string",
+          "description": "DesiredHostname is reserved for future relay/direct publication backends."
+        },
+        "health_path": {
+          "type": "string",
+          "description": "HealthPath is an optional service-local health endpoint path."
+        },
+        "state_root": {
+          "type": "string",
+          "description": "StateRoot overrides the managed service state root. Defaults to\n.gc/services/{name}. The path must stay within .gc/services/."
+        },
+        "workflow": {
+          "$ref": "#/$defs/ServiceWorkflowConfig",
+          "description": "Workflow configures controller-owned workflow services."
+        },
+        "proxy_process": {
+          "$ref": "#/$defs/ServiceProxyProcessConfig",
+          "description": "ProxyProcess configures reverse-proxied child processes."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "description": "Service declares a workspace-owned HTTP service mounted under /svc/{name}."
+    },
+    "ServiceProxyProcessConfig": {
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "Command is the executable to launch."
+        },
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Args are appended to Command."
+        },
+        "health_path": {
+          "type": "string",
+          "description": "HealthPath is the child-local health endpoint."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ServiceProxyProcessConfig configures a reverse-proxied child process."
+    },
+    "ServiceWorkflowConfig": {
+      "properties": {
+        "contract": {
+          "type": "string",
+          "description": "Contract selects the built-in workflow handler."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ServiceWorkflowConfig configures controller-owned workflow services."
     },
     "SessionConfig": {
       "properties": {

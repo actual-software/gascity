@@ -21,6 +21,7 @@ import (
 	"github.com/gastownhall/gascity/internal/mail"
 	"github.com/gastownhall/gascity/internal/mail/beadmail"
 	"github.com/gastownhall/gascity/internal/runtime"
+	"github.com/gastownhall/gascity/internal/workspacesvc"
 )
 
 // controllerState implements api.State and api.StateMutator.
@@ -41,6 +42,7 @@ type controllerState struct {
 	startedAt     time.Time
 	ct            crashTracker  // nil if crash tracking disabled
 	pokeCh        chan struct{} // nil when poke is not available; triggers immediate reconciler tick
+	services      workspacesvc.Registry
 }
 
 // newControllerState creates a controllerState with per-rig stores.
@@ -459,4 +461,11 @@ func (cs *controllerState) Poke() {
 	case cs.pokeCh <- struct{}{}:
 	default: // poke already pending
 	}
+}
+
+// ServiceRegistry returns the workspace service registry.
+func (cs *controllerState) ServiceRegistry() workspacesvc.Registry {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.services
 }

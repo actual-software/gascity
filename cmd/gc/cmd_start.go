@@ -300,6 +300,10 @@ func doStart(args []string, controllerMode bool, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "gc start: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	if err := config.ValidateServices(cfg.Services); err != nil {
+		fmt.Fprintf(stderr, "gc start: %v\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
 
 	// Materialize the gc-beads-bd script so the exec: provider can use it.
 	if _, err := MaterializeBeadsBdScript(cityPath); err != nil {

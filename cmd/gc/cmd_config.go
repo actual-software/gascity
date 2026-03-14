@@ -101,6 +101,9 @@ func doConfigShow(validate, showProvenance bool, stdout, stderr io.Writer) int {
 	if err := config.ValidateRigs(cfg.Rigs, cityName); err != nil {
 		validationErrors = append(validationErrors, err.Error())
 	}
+	if err := config.ValidateServices(cfg.Services); err != nil {
+		validationErrors = append(validationErrors, err.Error())
+	}
 
 	if validate {
 		if len(validationErrors) > 0 {

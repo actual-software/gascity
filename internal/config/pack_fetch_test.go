@@ -572,7 +572,7 @@ name = "boss"
 		t.Fatal(err)
 	}
 
-	agents, _, _, _, _, err := loadPack(
+	agents, _, _, _, _, _, err := loadPack(
 		fsys.OSFS{},
 		filepath.Join(topoDir, "pack.toml"),
 		topoDir,
