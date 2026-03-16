@@ -124,6 +124,49 @@ func TestSupervisorProviderReadinessRoute(t *testing.T) {
 	}
 }
 
+func TestSupervisorReadinessRoute(t *testing.T) {
+	homeDir := t.TempDir()
+	binDir := filepath.Join(homeDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeExecutable(t, binDir, "gh", "#!/bin/sh\nexit 0\n")
+	if err := os.MkdirAll(filepath.Join(homeDir, ".config", "gh"), 0o755); err != nil {
+		t.Fatalf("mkdir gh config dir: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(homeDir, ".config", "gh", "hosts.yml"),
+		[]byte("github.com:\n    user: octocat\n    oauth_token: token\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("write gh hosts: %v", err)
+	}
+
+	t.Setenv("HOME", homeDir)
+	originalPathEnv := providerProbePathEnv
+	providerProbePathEnv = binDir
+	defer func() {
+		providerProbePathEnv = originalPathEnv
+	}()
+
+	sm := newTestSupervisorMux(t, map[string]*fakeState{})
+	req := httptest.NewRequest("GET", "/v0/readiness?items=github_cli", nil)
+	rec := httptest.NewRecorder()
+	sm.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body: %s)", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp readinessResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := resp.Items["github_cli"].Status; got != probeStatusConfigured {
+		t.Errorf("github_cli status = %q, want %q", got, probeStatusConfigured)
+	}
+}
+
 func TestSupervisorCityNamespacedRoute(t *testing.T) {
 	s := newFakeState(t)
 	s.cityName = "bright-lights"

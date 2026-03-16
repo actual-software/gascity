@@ -85,6 +85,92 @@ printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstPar
 	}
 }
 
+func TestHandleReadinessReturnsConfiguredStatuses(t *testing.T) {
+	homeDir := t.TempDir()
+	binDir := filepath.Join(homeDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeExecutable(t, binDir, "claude", `#!/bin/sh
+printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}'
+`)
+	writeExecutable(t, binDir, "codex", "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, binDir, "gemini", "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, binDir, "gh", "#!/bin/sh\nexit 0\n")
+
+	if err := os.MkdirAll(filepath.Join(homeDir, ".codex"), 0o755); err != nil {
+		t.Fatalf("mkdir codex dir: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(homeDir, ".codex", "auth.json"),
+		[]byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"token"}}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("write codex auth: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(homeDir, ".gemini"), 0o755); err != nil {
+		t.Fatalf("mkdir gemini dir: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(homeDir, ".gemini", "settings.json"),
+		[]byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("write gemini settings: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(homeDir, ".gemini", "oauth_creds.json"),
+		[]byte(`{"refresh_token":"token"}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("write gemini creds: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(homeDir, ".config", "gh"), 0o755); err != nil {
+		t.Fatalf("mkdir gh config dir: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(homeDir, ".config", "gh", "hosts.yml"),
+		[]byte("github.com:\n    user: octocat\n    oauth_token: token\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("write gh hosts: %v", err)
+	}
+
+	t.Setenv("HOME", homeDir)
+	originalPathEnv := providerProbePathEnv
+	originalCommandContext := providerProbeCommandContext
+	providerProbePathEnv = binDir
+	providerProbeCommandContext = exec.CommandContext
+	defer func() {
+		providerProbePathEnv = originalPathEnv
+		providerProbeCommandContext = originalCommandContext
+	}()
+
+	srv := New(newFakeState(t))
+	req := httptest.NewRequest(http.MethodGet, "/v0/readiness?items=claude,codex,gemini,github_cli", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body: %s)", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp readinessResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, item := range []string{"claude", "codex", "gemini", "github_cli"} {
+		if got := resp.Items[item].Status; got != probeStatusConfigured {
+			t.Errorf("%s status = %q, want %q", item, got, probeStatusConfigured)
+		}
+	}
+	if got := resp.Items["github_cli"].Kind; got != probeKindTool {
+		t.Errorf("github_cli kind = %q, want %q", got, probeKindTool)
+	}
+}
+
 func TestHandleProviderReadinessFreshBypassesCache(t *testing.T) {
 	homeDir := t.TempDir()
 	binDir := filepath.Join(homeDir, "bin")
@@ -130,6 +216,17 @@ func TestHandleProviderReadinessFreshBypassesCache(t *testing.T) {
 func TestHandleProviderReadinessRejectsUnknownProviders(t *testing.T) {
 	srv := New(newFakeState(t))
 	req := httptest.NewRequest(http.MethodGet, "/v0/provider-readiness?providers=claude,unknown", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHandleReadinessRejectsUnknownItems(t *testing.T) {
+	srv := New(newFakeState(t))
+	req := httptest.NewRequest(http.MethodGet, "/v0/readiness?items=claude,unknown", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 
@@ -414,6 +511,39 @@ func TestHandleProviderReadinessReturnsNeedsAuthForGeminiWithoutRefreshToken(t *
 
 	srv := New(newFakeState(t))
 	assertProviderStatus(t, srv, "/v0/provider-readiness?providers=gemini&fresh=1", "gemini", probeStatusNeedsAuth)
+}
+
+func TestHandleReadinessReturnsNeedsAuthForGitHubCLIWithoutHostsFile(t *testing.T) {
+	homeDir := t.TempDir()
+	binDir := filepath.Join(homeDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeExecutable(t, binDir, "gh", "#!/bin/sh\nexit 0\n")
+
+	t.Setenv("HOME", homeDir)
+	originalPathEnv := providerProbePathEnv
+	providerProbePathEnv = binDir
+	defer func() {
+		providerProbePathEnv = originalPathEnv
+	}()
+
+	srv := New(newFakeState(t))
+	req := httptest.NewRequest(http.MethodGet, "/v0/readiness?items=github_cli&fresh=1", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body: %s)", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp readinessResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := resp.Items["github_cli"].Status; got != probeStatusNeedsAuth {
+		t.Fatalf("github_cli status = %q, want %q", got, probeStatusNeedsAuth)
+	}
 }
 
 func writeExecutable(t *testing.T, dir, name, body string) {

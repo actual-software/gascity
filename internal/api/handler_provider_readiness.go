@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -21,12 +23,57 @@ const (
 	probeStatusNotInstalled         = "not_installed"
 	probeStatusInvalidConfiguration = "invalid_configuration"
 	probeStatusProbeError           = "probe_error"
+
+	probeKindProvider = "provider"
+	probeKindTool     = "tool"
 )
 
 var (
 	providerProbePathEnv        = "/usr/local/bin:/usr/bin:/bin"
 	providerProbeCommandContext = exec.CommandContext
 	providerProbeCache          = newCachedProviderProbeStore()
+
+	defaultProviderReadinessItems = []string{"claude", "codex", "gemini"}
+	defaultReadinessItems         = []string{"claude", "codex", "gemini", "github_cli"}
+	supportedProviderReadiness    = readinessItemSet{
+		"claude": {},
+		"codex":  {},
+		"gemini": {},
+	}
+	supportedReadiness = readinessItemSet{
+		"claude":     {},
+		"codex":      {},
+		"gemini":     {},
+		"github_cli": {},
+	}
+	readinessProbeSpecs = map[string]readinessProbeSpec{
+		"claude": {
+			displayName: "Claude Code",
+			kind:        probeKindProvider,
+			probe:       probeClaude,
+		},
+		"codex": {
+			displayName: "Codex",
+			kind:        probeKindProvider,
+			probe: func(_ context.Context, homeDir string) providerProbeResult {
+				return probeCodex(homeDir)
+			},
+		},
+		"gemini": {
+			displayName: "Gemini CLI",
+			kind:        probeKindProvider,
+			probe: func(_ context.Context, homeDir string) providerProbeResult {
+				return probeGemini(homeDir)
+			},
+		},
+		"github_cli": {
+			displayName: "GitHub CLI",
+			kind:        probeKindTool,
+			probe: func(_ context.Context, homeDir string) providerProbeResult {
+				return probeGitHubCLI(homeDir)
+			},
+		},
+	}
 )
 
 const providerProbeCacheTTL = 2 * time.Second
@@ -35,7 +82,18 @@ type providerReadinessResponse struct {
 	Providers map[string]providerReadiness `json:"providers"`
 }
 
+type readinessResponse struct {
+	Items map[string]readinessItem `json:"items"`
+}
+
 type providerReadiness struct {
+	DisplayName string `json:"display_name"`
+	Status      string `json:"status"`
+}
+
+type readinessItem struct {
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
 	DisplayName string `json:"display_name"`
 	Status      string `json:"status"`
 }
@@ -59,8 +117,21 @@ type geminiSettings struct {
 	} `json:"security"`
 }
 
+type githubAuthHost struct {
+	OAuthToken string `yaml:"oauth_token"`
+	Token      string `yaml:"token"`
+}
+
 type providerProbeResult struct {
 	status string
+}
+
+type readinessItemSet map[string]struct{}
+
+type readinessProbeSpec struct {
+	displayName string
+	kind        string
+	probe       func(context.Context, string) providerProbeResult
 }
 
 type cachedProviderProbe struct {
@@ -74,7 +145,12 @@ type cachedProviderProbeStore struct {
 }
 
 func handleProviderReadiness(w http.ResponseWriter, r *http.Request) {
-	providers, err := parseRequestedProviders(r)
+	providers, err := parseRequestedReadinessItems(
+		r.URL.Query().Get("providers"),
+		"providers",
+		defaultProviderReadinessItems,
+		supportedProviderReadiness,
+	)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid", err.Error())
 		return
@@ -85,51 +161,79 @@ func handleProviderReadiness(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	homeDir, err := workspaceHomeDir()
+	resp, err := buildReadinessResponse(r.Context(), providers, fresh)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "workspace home unavailable")
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
 
-	resp := providerReadinessResponse{
+	providerResp := providerReadinessResponse{
 		Providers: make(map[string]providerReadiness, len(providers)),
 	}
 	for _, provider := range providers {
-		result := probeProvider(r.Context(), homeDir, provider, fresh)
-		resp.Providers[provider] = providerReadiness{
-			DisplayName: providerDisplayName(provider),
-			Status:      result.status,
+		item := resp.Items[provider]
+		providerResp.Providers[provider] = providerReadiness{
+			DisplayName: item.DisplayName,
+			Status:      item.Status,
 		}
 	}
 
+	writeJSON(w, http.StatusOK, providerResp)
+}
+
+func handleReadiness(w http.ResponseWriter, r *http.Request) {
+	items, err := parseRequestedReadinessItems(
+		r.URL.Query().Get("items"),
+		"items",
+		defaultReadinessItems,
+		supportedReadiness,
+	)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	fresh, err := parseFreshParam(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+
+	resp, err := buildReadinessResponse(r.Context(), items, fresh)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func parseRequestedProviders(r *http.Request) ([]string, error) {
-	raw := strings.TrimSpace(r.URL.Query().Get("providers"))
+func parseRequestedReadinessItems(
+	raw string,
+	paramName string,
+	defaults []string,
+	allowed readinessItemSet,
+) ([]string, error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return []string{"claude", "codex", "gemini"}, nil
+		return append([]string(nil), defaults...), nil
 	}
 
-	var providers []string
+	var items []string
 	seen := make(map[string]struct{})
 	for _, part := range strings.Split(raw, ",") {
 		name := strings.TrimSpace(part)
-		switch name {
-		case "claude", "codex", "gemini":
-		default:
-			return nil, fmt.Errorf("unsupported provider %q", name)
+		if _, ok := allowed[name]; !ok {
+			return nil, fmt.Errorf("unsupported %s value %q", paramName, name)
 		}
 		if _, ok := seen[name]; ok {
 			continue
 		}
 		seen[name] = struct{}{}
-		providers = append(providers, name)
+		items = append(items, name)
 	}
-	if len(providers) == 0 {
-		return nil, errors.New("providers is required")
+	if len(items) == 0 {
+		return nil, fmt.Errorf("%s is required", paramName)
 	}
-	return providers, nil
+	return items, nil
 }
 
 func parseFreshParam(r *http.Request) (bool, error) {
@@ -154,30 +258,54 @@ func workspaceHomeDir() (string, error) {
 	return os.UserHomeDir()
 }
 
-func probeProvider(ctx context.Context, homeDir, provider string, fresh bool) providerProbeResult {
-	cacheKey := homeDir + "\x00" + provider
+func buildReadinessResponse(
+	ctx context.Context,
+	items []string,
+	fresh bool,
+) (readinessResponse, error) {
+	homeDir, err := workspaceHomeDir()
+	if err != nil {
+		return readinessResponse{}, errors.New("workspace home unavailable")
+	}
+
+	resp := readinessResponse{
+		Items: make(map[string]readinessItem, len(items)),
+	}
+	for _, itemName := range items {
+		spec, ok := readinessProbeSpecs[itemName]
+		if !ok {
+			return readinessResponse{}, fmt.Errorf("unsupported readiness item %q", itemName)
+		}
+		result := probeReadinessItem(ctx, homeDir, itemName, fresh)
+		resp.Items[itemName] = readinessItem{
+			Name:        itemName,
+			Kind:        spec.kind,
+			DisplayName: spec.displayName,
+			Status:      result.status,
+		}
+	}
+	return resp, nil
+}
+
+func probeReadinessItem(ctx context.Context, homeDir, itemName string, fresh bool) providerProbeResult {
+	cacheKey := homeDir + "\x00" + itemName
 	if !fresh {
 		if result, ok := providerProbeCache.load(cacheKey); ok {
 			return result
 		}
 	}
 
-	result := probeProviderUncached(ctx, homeDir, provider)
+	result := probeReadinessItemUncached(ctx, homeDir, itemName)
 	providerProbeCache.store(cacheKey, result)
 	return result
 }
 
-func probeProviderUncached(ctx context.Context, homeDir, provider string) providerProbeResult {
-	switch provider {
-	case "claude":
-		return probeClaude(ctx, homeDir)
-	case "codex":
-		return probeCodex(homeDir)
-	case "gemini":
-		return probeGemini(homeDir)
-	default:
+func probeReadinessItemUncached(ctx context.Context, homeDir, itemName string) providerProbeResult {
+	spec, ok := readinessProbeSpecs[itemName]
+	if !ok || spec.probe == nil {
 		return providerProbeResult{status: probeStatusProbeError}
 	}
+	return spec.probe(ctx, homeDir)
 }
 
 func newCachedProviderProbeStore() *cachedProviderProbeStore {
@@ -208,19 +336,6 @@ func (s *cachedProviderProbeStore) store(key string, result providerProbeResult)
 	s.entries[key] = cachedProviderProbe{
 		result:  result,
 		expires: time.Now().Add(providerProbeCacheTTL),
-	}
-}
-
-func providerDisplayName(provider string) string {
-	switch provider {
-	case "claude":
-		return "Claude Code"
-	case "codex":
-		return "Codex"
-	case "gemini":
-		return "Gemini CLI"
-	default:
-		return provider
 	}
 }
 
@@ -327,6 +442,32 @@ func probeGemini(homeDir string) providerProbeResult {
 	default:
 		return providerProbeResult{status: probeStatusInvalidConfiguration}
 	}
+}
+
+func probeGitHubCLI(homeDir string) providerProbeResult {
+	if _, ok := findProbeBinary("gh"); !ok {
+		return providerProbeResult{status: probeStatusNotInstalled}
+	}
+
+	data, err := os.ReadFile(filepath.Join(homeDir, ".config", "gh", "hosts.yml"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return providerProbeResult{status: probeStatusNeedsAuth}
+		}
+		return providerProbeResult{status: probeStatusProbeError}
+	}
+
+	var hosts map[string]githubAuthHost
+	if err := yaml.Unmarshal(data, &hosts); err != nil {
+		return providerProbeResult{status: probeStatusProbeError}
+	}
+
+	for _, host := range hosts {
+		if nonEmptyString(host.OAuthToken) || nonEmptyString(host.Token) {
+			return providerProbeResult{status: probeStatusConfigured}
+		}
+	}
+	return providerProbeResult{status: probeStatusNeedsAuth}
 }
 
 func findProbeBinary(name string) (string, bool) {

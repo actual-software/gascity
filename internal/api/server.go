@@ -140,6 +140,7 @@ func (s *Server) registerRoutes() {
 
 	// City
 	s.mux.HandleFunc("GET /v0/provider-readiness", handleProviderReadiness)
+	s.mux.HandleFunc("GET /v0/readiness", handleReadiness)
 	s.mux.HandleFunc("GET /v0/city", s.handleCityGet)
 	s.mux.HandleFunc("PATCH /v0/city", s.handleCityPatch)
 	s.mux.HandleFunc("POST /v0/city", handleCityCreate)
