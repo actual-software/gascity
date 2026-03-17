@@ -19,8 +19,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     jq \
-    lsof \
-    netcat-openbsd \
     procps \
     sudo \
     tmux \
