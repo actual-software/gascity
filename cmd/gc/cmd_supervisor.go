@@ -861,6 +861,7 @@ func reconcileCities(
 		cs := newControllerState(cfg, sp, eventProv, cityName, path)
 		cs.ct = cr.crashTrack()
 		cs.pokeCh = pokeCh
+		cs.services = cr.svc
 		cr.setControllerState(cs)
 
 		// Run pool on_boot hooks (same as runController does).
