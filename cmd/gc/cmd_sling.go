@@ -259,12 +259,24 @@ func cmdSling(args []string, isFormula, doNudge, force bool, title string, vars 
 		cityName = filepath.Base(cityPath)
 	}
 
-	// Use the target agent's rig directory for the store so that mol
-	// operations (MolCook, MolCookOn) create beads in the correct rig
-	// database. City-scoped agents (no Dir) fall back to cityPath.
+	// Determine which beads store to use. Priority:
+	// 1. Bead's prefix → rig directory (the bead lives in that rig's store)
+	// 2. Target agent's rig directory (mol operations create in the agent's store)
+	// 3. City path (fallback for city-scoped agents)
 	storeDir := cityPath
-	if rd := rigDirForAgent(cfg, a); rd != "" {
-		storeDir = rd
+	if bp := beadPrefix(beadOrFormula); bp != "" {
+		if rig, found := findRigByPrefix(cfg, bp); found {
+			rigPath := rig.Path
+			if !filepath.IsAbs(rigPath) {
+				rigPath = filepath.Join(cityPath, rigPath)
+			}
+			storeDir = rigPath
+		}
+	}
+	if storeDir == cityPath {
+		if rd := rigDirForAgent(cfg, a); rd != "" {
+			storeDir = rd
+		}
 	}
 	store := bdStoreForCity(storeDir, cityPath)
 
