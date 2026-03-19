@@ -75,11 +75,12 @@ func serviceRequestAllowed(w http.ResponseWriter, status workspacesvc.Status, r 
 		return false
 	}
 	if !directPublished {
-		if !isLoopbackRemoteAddr(r.RemoteAddr) {
+		internalProxyRequest := r.Header.Get("X-GC-Request") != ""
+		if !isLoopbackRemoteAddr(r.RemoteAddr) && !internalProxyRequest {
 			writeError(w, http.StatusNotFound, "not_found", "service route not found")
 			return false
 		}
-		if isMutationMethod(r.Method) && r.Header.Get("X-GC-Request") == "" {
+		if isMutationMethod(r.Method) && !internalProxyRequest {
 			writeError(w, http.StatusForbidden, "csrf", "X-GC-Request header required on private service mutation endpoints")
 			return false
 		}

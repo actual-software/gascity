@@ -230,6 +230,58 @@ func TestServiceProxyPrivateRejectsExternalRequests(t *testing.T) {
 	}
 }
 
+func TestServiceProxyPrivateAllowsExternalReadWithInternalHeader(t *testing.T) {
+	state := newFakeState(t)
+	state.services = &fakeServiceRegistry{
+		items: []workspacesvc.Status{{
+			ServiceName: "review-intake",
+			PublishMode: "private",
+		}},
+		serve: func(w http.ResponseWriter, _ *http.Request) bool {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("proxied"))
+			return true
+		},
+	}
+	srv := New(state)
+
+	req := httptest.NewRequest(http.MethodGet, "/svc/review-intake/healthz", nil)
+	req.RemoteAddr = "198.51.100.10:9000"
+	req.Header.Set("X-GC-Request", "1")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestServiceProxyPrivateAllowsExternalMutationWithInternalHeader(t *testing.T) {
+	state := newFakeState(t)
+	state.services = &fakeServiceRegistry{
+		items: []workspacesvc.Status{{
+			ServiceName: "review-intake",
+			PublishMode: "private",
+		}},
+		serve: func(w http.ResponseWriter, _ *http.Request) bool {
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte("proxied"))
+			return true
+		},
+	}
+	srv := New(state)
+
+	req := httptest.NewRequest(http.MethodPost, "/svc/review-intake/hooks/github", strings.NewReader(`{}`))
+	req.RemoteAddr = "198.51.100.10:9000"
+	req.Header.Set("X-GC-Request", "1")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusAccepted)
+	}
+}
+
 func TestServiceProxyPrivateRequiresCSRFForLocalMutation(t *testing.T) {
 	state := newFakeState(t)
 	state.services = &fakeServiceRegistry{
