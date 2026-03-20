@@ -240,6 +240,51 @@ func TestMemStoreDepListEmpty(t *testing.T) {
 	}
 }
 
+func TestMemStoreReadyRespectsBlockingDeps(t *testing.T) {
+	s := beads.NewMemStore()
+
+	blocker, err := s.Create(beads.Bead{Title: "blocker", Type: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := s.Create(beads.Bead{Title: "blocked", Type: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := s.Create(beads.Bead{Title: "ready", Type: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DepAdd(blocked.ID, blocker.ID, "blocks"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Ready()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Ready() returned %d beads, want 2", len(got))
+	}
+	if got[0].ID != blocker.ID || got[1].ID != ready.ID {
+		t.Fatalf("Ready() IDs = [%s %s], want [%s %s]", got[0].ID, got[1].ID, blocker.ID, ready.ID)
+	}
+
+	if err := s.Close(blocker.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.Ready()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Ready() after closing blocker returned %d beads, want 2", len(got))
+	}
+	if got[0].ID != blocked.ID || got[1].ID != ready.ID {
+		t.Fatalf("Ready() after closing blocker IDs = [%s %s], want [%s %s]", got[0].ID, got[1].ID, blocked.ID, ready.ID)
+	}
+}
+
 func TestMemStoreDepListDefaultDirection(t *testing.T) {
 	s := beads.NewMemStore()
 	_ = s.DepAdd("a", "b", "blocks")

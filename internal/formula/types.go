@@ -258,7 +258,7 @@ type Step struct {
 
 	// Ralph wraps this step in an inline run/check retry loop.
 	// The original step becomes a logical container, and the actionable work is
-	// emitted as first-class child steps.
+	// emitted as first-class graph steps.
 	Ralph *RalphSpec `json:"ralph,omitempty" toml:"ralph,omitempty"`
 
 	// Source tracing fields: track where this step came from.

@@ -142,6 +142,8 @@ func toRecipe(f *Formula) *Recipe {
 		Pour:        f.Pour,
 	}
 
+	graphWorkflow := hasDetachedGraphSteps(f.Steps)
+
 	// Determine root title: use {{title}} placeholder if the variable
 	// is defined, otherwise fall back to formula name.
 	rootTitle := f.Formula
@@ -154,12 +156,20 @@ func toRecipe(f *Formula) *Recipe {
 	}
 
 	// Root step
+	rootType := "epic"
+	if graphWorkflow {
+		rootType = "task"
+	}
+
 	rootStep := RecipeStep{
 		ID:          f.Formula,
 		Title:       rootTitle,
 		Description: rootDesc,
-		Type:        "epic",
+		Type:        rootType,
 		IsRoot:      true,
+	}
+	if graphWorkflow {
+		rootStep.Metadata = map[string]string{"gc.kind": "workflow"}
 	}
 	defPriority := 2
 	rootStep.Priority = &defPriority
@@ -177,12 +187,15 @@ func toRecipe(f *Formula) *Recipe {
 
 	// Collect dependency edges from depends_on/needs/waits_for
 	collectRecipeDeps(f.Steps, idMapping, &r.Deps)
+	if graphWorkflow {
+		addWorkflowRootDeps(f.Formula, f.Steps, idMapping, &r.Deps)
+	}
 
 	return r
 }
 
 // flattenSteps recursively converts formula Steps into RecipeSteps,
-// generating namespaced IDs and parent-child dependency edges.
+// generating namespaced IDs and parent-child dependency edges where applicable.
 func flattenSteps(steps []*Step, parentID string, idMapping map[string]string, out *[]RecipeStep, deps *[]RecipeDep) {
 	for _, step := range steps {
 		issueID := parentID + "." + step.ID
@@ -216,12 +229,15 @@ func flattenSteps(steps []*Step, parentID string, idMapping map[string]string, o
 
 		*out = append(*out, rs)
 
-		// Parent-child dependency
-		*deps = append(*deps, RecipeDep{
-			StepID:      issueID,
-			DependsOnID: parentID,
-			Type:        "parent-child",
-		})
+		// Ralph-generated graph nodes intentionally avoid parent-child semantics.
+		// They are linked only through explicit blocking deps.
+		if !isDetachedGraphStep(step) {
+			*deps = append(*deps, RecipeDep{
+				StepID:      issueID,
+				DependsOnID: parentID,
+				Type:        "parent-child",
+			})
+		}
 
 		// Gate issue synthesis
 		if step.Gate != nil {
@@ -266,6 +282,59 @@ func flattenSteps(steps []*Step, parentID string, idMapping map[string]string, o
 		if len(step.Children) > 0 {
 			flattenSteps(step.Children, issueID, idMapping, out, deps)
 		}
+	}
+}
+
+func isDetachedGraphStep(step *Step) bool {
+	if step == nil {
+		return false
+	}
+	switch step.Metadata["gc.kind"] {
+	case "ralph", "run", "check":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasDetachedGraphSteps(steps []*Step) bool {
+	for _, step := range steps {
+		if isDetachedGraphStep(step) {
+			return true
+		}
+		if hasDetachedGraphSteps(step.Children) {
+			return true
+		}
+	}
+	return false
+}
+
+func addWorkflowRootDeps(rootID string, steps []*Step, idMapping map[string]string, deps *[]RecipeDep) {
+	for _, step := range steps {
+		if !isWorkflowRootBlocker(step) {
+			continue
+		}
+		issueID, ok := idMapping[step.ID]
+		if !ok {
+			continue
+		}
+		*deps = append(*deps, RecipeDep{
+			StepID:      rootID,
+			DependsOnID: issueID,
+			Type:        "blocks",
+		})
+	}
+}
+
+func isWorkflowRootBlocker(step *Step) bool {
+	if step == nil {
+		return false
+	}
+	switch step.Metadata["gc.kind"] {
+	case "run", "check":
+		return false
+	default:
+		return true
 	}
 }
 

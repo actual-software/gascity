@@ -152,13 +152,38 @@ func (m *MemStore) List() ([]Bead, error) {
 	return result, nil
 }
 
-// Ready returns all beads with status "open", in creation order.
+// Ready returns all open beads with no open blocking dependencies, in
+// creation order.
 func (m *MemStore) Ready() ([]Bead, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	statusByID := make(map[string]string, len(m.beads))
+	for _, bead := range m.beads {
+		statusByID[bead.ID] = bead.Status
+	}
+
 	var result []Bead
 	for _, b := range m.beads {
-		if b.Status == "open" {
+		if b.Status != "open" {
+			continue
+		}
+		blocked := false
+		for _, dep := range m.deps {
+			if dep.IssueID != b.ID {
+				continue
+			}
+			switch dep.Type {
+			case "blocks", "waits-for", "conditional-blocks":
+			default:
+				continue
+			}
+			if statusByID[dep.DependsOnID] != "closed" {
+				blocked = true
+				break
+			}
+		}
+		if !blocked {
 			result = append(result, cloneBead(b))
 		}
 	}

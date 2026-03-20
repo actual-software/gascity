@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gastownhall/gascity/internal/formula"
+	"github.com/gastownhall/gascity/internal/molecule"
 	"github.com/spf13/cobra"
 )
 
@@ -19,6 +20,7 @@ func newFormulaCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd.AddCommand(newFormulaListCmd(stdout))
 	cmd.AddCommand(newFormulaShowCmd(stdout, stderr))
+	cmd.AddCommand(newFormulaCookCmd(stdout, stderr))
 	return cmd
 }
 
@@ -191,6 +193,103 @@ Examples:
 
 	cmd.Flags().StringArray("var", nil, "variable substitution for preview (key=value)")
 	return cmd
+}
+
+func newFormulaCookCmd(stdout, stderr io.Writer) *cobra.Command {
+	var title string
+	var vars []string
+	var metadata []string
+	cmd := &cobra.Command{
+		Use:   "cook <formula-name>",
+		Short: "Instantiate a formula into the current bead store",
+		Long: `Compile and instantiate a formula as real beads in the current store.
+
+This is a low-level workflow construction tool. It creates the formula root
+and all compiled step beads without routing any work.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cityPath, err := resolveCity()
+			if err != nil {
+				return err
+			}
+			readDoltPort(cityPath)
+			cfg, err := loadCityConfig(cityPath)
+			if err != nil {
+				return err
+			}
+			store, err := openStoreAtForCity(cityPath, cityPath)
+			if err != nil {
+				return err
+			}
+
+			cookVars := parseFormulaVars(vars)
+			result, err := molecule.Cook(cmd.Context(), store, args[0], cfg.FormulaLayers.City, molecule.Options{
+				Title: title,
+				Vars:  cookVars,
+			})
+			if err != nil {
+				return err
+			}
+
+			rootMeta, err := parseMetadataArgs(metadata)
+			if err != nil {
+				return err
+			}
+			if len(rootMeta) > 0 {
+				if err := store.SetMetadataBatch(result.RootID, rootMeta); err != nil {
+					return fmt.Errorf("setting root metadata on %s: %w", result.RootID, err)
+				}
+			}
+
+			fmt.Fprintf(stdout, "Root: %s\n", result.RootID)
+			fmt.Fprintf(stdout, "Created: %d\n", result.Created)
+			keys := make([]string, 0, len(result.IDMapping))
+			for stepID := range result.IDMapping {
+				keys = append(keys, stepID)
+			}
+			slices.Sort(keys)
+			for _, stepID := range keys {
+				fmt.Fprintf(stdout, "%s -> %s\n", stepID, result.IDMapping[stepID])
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&title, "title", "t", "", "override root bead title")
+	cmd.Flags().StringArrayVar(&vars, "var", nil, "variable substitution for formula (key=value, repeatable)")
+	cmd.Flags().StringArrayVar(&metadata, "meta", nil, "set root bead metadata after cook (key=value, repeatable)")
+	return cmd
+}
+
+func parseFormulaVars(varFlags []string) map[string]string {
+	if len(varFlags) == 0 {
+		return nil
+	}
+	vars := make(map[string]string, len(varFlags))
+	for _, v := range varFlags {
+		key, value, ok := strings.Cut(v, "=")
+		if ok && key != "" {
+			vars[key] = value
+		}
+	}
+	if len(vars) == 0 {
+		return nil
+	}
+	return vars
+}
+
+func parseMetadataArgs(items []string) (map[string]string, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(items))
+	for _, item := range items {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok || key == "" {
+			return nil, fmt.Errorf("invalid metadata %q (want key=value)", item)
+		}
+		out[key] = value
+	}
+	return out, nil
 }
 
 // cityFormulaSearchPaths returns the city-level formula search paths.

@@ -372,3 +372,155 @@ depends_on = ["implement"]
 		t.Errorf("verify.ParentID = %q, want %q", verify.ParentID, result.RootID)
 	}
 }
+
+func TestCookEndToEndRalph(t *testing.T) {
+	dir := t.TempDir()
+	toml := `
+formula = "ralph-demo"
+description = "Ralph cook test"
+
+[[steps]]
+id = "design"
+title = "Design"
+
+[[steps]]
+id = "implement"
+title = "Implement"
+needs = ["design"]
+
+[steps.metadata]
+custom = "value"
+
+[steps.ralph]
+max_attempts = 3
+
+[steps.ralph.check]
+mode = "exec"
+path = ".gascity/checks/widget.sh"
+timeout = "2m"
+`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-demo.formula.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatalf("writing formula: %v", err)
+	}
+
+	store := beads.NewMemStore()
+	result, err := Cook(context.Background(), store, "ralph-demo", []string{dir}, Options{})
+	if err != nil {
+		t.Fatalf("Cook: %v", err)
+	}
+
+	if result.Created != 5 {
+		t.Fatalf("Created = %d, want 5 (root + design + logical + run + check)", result.Created)
+	}
+
+	root, err := store.Get(result.RootID)
+	if err != nil {
+		t.Fatalf("get root: %v", err)
+	}
+	logical, err := store.Get(result.IDMapping["ralph-demo.implement"])
+	if err != nil {
+		t.Fatalf("get logical: %v", err)
+	}
+	run, err := store.Get(result.IDMapping["ralph-demo.implement.run.1"])
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	check, err := store.Get(result.IDMapping["ralph-demo.implement.check.1"])
+	if err != nil {
+		t.Fatalf("get check: %v", err)
+	}
+
+	if logical.Metadata["gc.kind"] != "ralph" {
+		t.Fatalf("logical gc.kind = %q, want ralph", logical.Metadata["gc.kind"])
+	}
+	if root.Metadata["gc.kind"] != "workflow" {
+		t.Fatalf("root gc.kind = %q, want workflow", root.Metadata["gc.kind"])
+	}
+	if root.Type != "task" {
+		t.Fatalf("root type = %q, want task", root.Type)
+	}
+	if run.Metadata["gc.kind"] != "run" {
+		t.Fatalf("run gc.kind = %q, want run", run.Metadata["gc.kind"])
+	}
+	if run.ParentID != "" {
+		t.Fatalf("run ParentID = %q, want detached graph node", run.ParentID)
+	}
+	if run.Metadata["gc.logical_bead_id"] != logical.ID {
+		t.Fatalf("run gc.logical_bead_id = %q, want %q", run.Metadata["gc.logical_bead_id"], logical.ID)
+	}
+	if run.Metadata["gc.root_bead_id"] != result.RootID {
+		t.Fatalf("run gc.root_bead_id = %q, want %q", run.Metadata["gc.root_bead_id"], result.RootID)
+	}
+	if run.Metadata["custom"] != "value" {
+		t.Fatalf("run custom metadata = %q, want value", run.Metadata["custom"])
+	}
+	if check.Metadata["gc.kind"] != "check" {
+		t.Fatalf("check gc.kind = %q, want check", check.Metadata["gc.kind"])
+	}
+	if check.ParentID != "" {
+		t.Fatalf("check ParentID = %q, want detached graph node", check.ParentID)
+	}
+	if check.Metadata["gc.logical_bead_id"] != logical.ID {
+		t.Fatalf("check gc.logical_bead_id = %q, want %q", check.Metadata["gc.logical_bead_id"], logical.ID)
+	}
+	if check.Metadata["gc.root_bead_id"] != result.RootID {
+		t.Fatalf("check gc.root_bead_id = %q, want %q", check.Metadata["gc.root_bead_id"], result.RootID)
+	}
+	if check.Metadata["gc.check_path"] != ".gascity/checks/widget.sh" {
+		t.Fatalf("check gc.check_path = %q, want .gascity/checks/widget.sh", check.Metadata["gc.check_path"])
+	}
+
+	checkDeps, err := store.DepList(check.ID, "down")
+	if err != nil {
+		t.Fatalf("dep list check: %v", err)
+	}
+	foundRunBlock := false
+	for _, dep := range checkDeps {
+		if dep.Type == "blocks" && dep.DependsOnID == run.ID {
+			foundRunBlock = true
+			break
+		}
+	}
+	if !foundRunBlock {
+		t.Fatalf("check bead does not block on run bead; deps=%v", checkDeps)
+	}
+
+	logicalDeps, err := store.DepList(logical.ID, "down")
+	if err != nil {
+		t.Fatalf("dep list logical: %v", err)
+	}
+	foundCheckBlock := false
+	for _, dep := range logicalDeps {
+		if dep.Type == "blocks" && dep.DependsOnID == check.ID {
+			foundCheckBlock = true
+			break
+		}
+	}
+	if !foundCheckBlock {
+		t.Fatalf("logical bead does not block on check bead; deps=%v", logicalDeps)
+	}
+
+	rootDeps, err := store.DepList(root.ID, "down")
+	if err != nil {
+		t.Fatalf("dep list root: %v", err)
+	}
+	foundDesignBlock := false
+	foundLogicalBlock := false
+	for _, dep := range rootDeps {
+		if dep.Type != "blocks" {
+			continue
+		}
+		switch dep.DependsOnID {
+		case result.IDMapping["ralph-demo.design"]:
+			foundDesignBlock = true
+		case logical.ID:
+			foundLogicalBlock = true
+		}
+	}
+	if !foundDesignBlock {
+		t.Fatalf("root bead does not block on design bead; deps=%v", rootDeps)
+	}
+	if !foundLogicalBlock {
+		t.Fatalf("root bead does not block on logical bead; deps=%v", rootDeps)
+	}
+}

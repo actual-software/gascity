@@ -14,8 +14,8 @@ type Recipe struct {
 	Description string
 
 	// Steps is the flattened, ordered step list. Steps[0] is always the
-	// root epic. Subsequent entries are in creation order (parent before
-	// children, depth-first).
+	// root workflow bead. Subsequent entries are in creation order (parent
+	// before children, depth-first).
 	Steps []RecipeStep
 
 	// Deps is the complete set of dependency edges between steps.
@@ -42,7 +42,7 @@ type Recipe struct {
 // RecipeStep represents a single step in a compiled recipe.
 type RecipeStep struct {
 	// ID is the namespaced step identifier (e.g., "mol-feature.implement").
-	// For the root epic, this is the formula name itself.
+	// For the root workflow bead, this is the formula name itself.
 	ID string
 
 	// Title may contain {{variable}} placeholders.
@@ -67,7 +67,7 @@ type RecipeStep struct {
 	// Assignee is the agent/user to assign this step to.
 	Assignee string
 
-	// IsRoot is true for the root epic (Steps[0]).
+	// IsRoot is true for the root workflow bead (Steps[0]).
 	IsRoot bool
 
 	// Metadata is copied to the bead metadata as string key/value pairs.

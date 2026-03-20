@@ -200,3 +200,70 @@ title = "Scan"
 		t.Error("vapor formula should be RootOnly by default")
 	}
 }
+
+func TestCompileRalphMarksWorkflowRootAndBlocksOnTopLevelSteps(t *testing.T) {
+	dir := t.TempDir()
+	formulaContent := `
+formula = "ralph-demo"
+version = 1
+
+[[steps]]
+id = "design"
+title = "Design"
+
+[[steps]]
+id = "implement"
+title = "Implement"
+needs = ["design"]
+
+[steps.ralph]
+max_attempts = 2
+
+[steps.ralph.check]
+mode = "exec"
+path = ".gascity/checks/widget.sh"
+timeout = "30s"
+`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-demo.formula.toml"), []byte(formulaContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	recipe, err := Compile(context.Background(), "ralph-demo", []string{dir}, nil)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	root := recipe.RootStep()
+	if root == nil {
+		t.Fatal("root step missing")
+	}
+	if got := root.Metadata["gc.kind"]; got != "workflow" {
+		t.Fatalf("root gc.kind = %q, want workflow", got)
+	}
+	if root.Type != "task" {
+		t.Fatalf("root type = %q, want task", root.Type)
+	}
+
+	assertHasDep := func(stepID, dependsOnID, depType string) {
+		t.Helper()
+		for _, dep := range recipe.Deps {
+			if dep.StepID == stepID && dep.DependsOnID == dependsOnID && dep.Type == depType {
+				return
+			}
+		}
+		t.Fatalf("missing dep %s --%s--> %s", stepID, depType, dependsOnID)
+	}
+	assertLacksDep := func(stepID, dependsOnID, depType string) {
+		t.Helper()
+		for _, dep := range recipe.Deps {
+			if dep.StepID == stepID && dep.DependsOnID == dependsOnID && dep.Type == depType {
+				t.Fatalf("unexpected dep %s --%s--> %s", stepID, depType, dependsOnID)
+			}
+		}
+	}
+
+	assertHasDep("ralph-demo", "ralph-demo.design", "blocks")
+	assertHasDep("ralph-demo", "ralph-demo.implement", "blocks")
+	assertLacksDep("ralph-demo", "ralph-demo.implement.run.1", "blocks")
+	assertLacksDep("ralph-demo", "ralph-demo.implement.check.1", "blocks")
+}

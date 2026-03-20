@@ -9,6 +9,7 @@ package molecule
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/formula"
@@ -100,7 +101,9 @@ func Instantiate(ctx context.Context, store beads.Store, recipe *formula.Recipe,
 
 		// Root bead overrides.
 		if step.IsRoot {
-			b.Type = "molecule"
+			if step.Metadata["gc.kind"] != "workflow" {
+				b.Type = "molecule"
+			}
 			b.Ref = recipe.Name
 			if opts.Title != "" {
 				b.Title = opts.Title
@@ -126,6 +129,26 @@ func Instantiate(ctx context.Context, store beads.Store, recipe *formula.Recipe,
 			}
 			// Set Ref to the step ID suffix (after the formula name prefix).
 			b.Ref = step.ID
+
+			if step.Metadata["gc.kind"] != "" {
+				if rootBeadID, ok := idMapping[recipe.Steps[0].ID]; ok && rootBeadID != "" {
+					if b.Metadata == nil {
+						b.Metadata = make(map[string]string, 1)
+					}
+					b.Metadata["gc.root_bead_id"] = rootBeadID
+				}
+			}
+
+			// Inline Ralph attempt beads need the actual logical bead ID at runtime.
+			// Stamp it during instantiation while the recipe-step -> bead mapping is live.
+			if logicalStepID, ok := logicalRecipeStepID(step); ok {
+				if logicalBeadID, exists := idMapping[logicalStepID]; exists {
+					if b.Metadata == nil {
+						b.Metadata = make(map[string]string, 1)
+					}
+					b.Metadata["gc.logical_bead_id"] = logicalBeadID
+				}
+			}
 		}
 
 		created, err := store.Create(b)
@@ -221,4 +244,29 @@ func markFailed(store beads.Store, ids []string) {
 	for _, id := range ids {
 		_ = store.SetMetadata(id, "molecule_failed", "true")
 	}
+}
+
+func logicalRecipeStepID(step formula.RecipeStep) (string, bool) {
+	kind := step.Metadata["gc.kind"]
+	if kind != "run" && kind != "check" {
+		return "", false
+	}
+	if attempt := step.Metadata["gc.attempt"]; attempt != "" {
+		if trimmed, ok := trimAttemptSuffix(step.ID, "."+kind+"."+attempt); ok {
+			return trimmed, true
+		}
+	}
+	for _, prefix := range []string{".run.", ".check."} {
+		if idx := strings.LastIndex(step.ID, prefix); idx > 0 {
+			return step.ID[:idx], true
+		}
+	}
+	return "", false
+}
+
+func trimAttemptSuffix(id, suffix string) (string, bool) {
+	if suffix == "" || !strings.HasSuffix(id, suffix) {
+		return "", false
+	}
+	return strings.TrimSuffix(id, suffix), true
 }
