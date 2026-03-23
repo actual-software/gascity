@@ -33,8 +33,8 @@ type fakeState struct {
 	rawCfg        *config.City // optional: raw config for provenance detection
 	sp            *runtime.Fake
 	stores        map[string]beads.Store
-	cityBeadStore beads.Store // city-level store for session beads
-	mailProvs     map[string]mail.Provider
+	cityBeadStore beads.Store   // city-level store for session beads
+	cityMailProv  mail.Provider // city-level mail provider (all mail is city-scoped)
 	eventProv     events.Provider
 	cityName      string
 	cityPath      string
@@ -62,8 +62,8 @@ func newFakeState(t *testing.T) *fakeState {
 			},
 		},
 		sp:        runtime.NewFake(),
-		stores:    map[string]beads.Store{"myrig": store},
-		mailProvs: map[string]mail.Provider{"myrig": mp},
+		stores:       map[string]beads.Store{"myrig": store},
+		cityMailProv: mp,
 		eventProv: events.NewFake(),
 		cityName:  "test-city",
 		cityPath:  t.TempDir(),
@@ -75,8 +75,13 @@ func (f *fakeState) Config() *config.City                    { return f.cfg }
 func (f *fakeState) SessionProvider() runtime.Provider       { return f.sp }
 func (f *fakeState) BeadStore(rig string) beads.Store        { return f.stores[rig] }
 func (f *fakeState) BeadStores() map[string]beads.Store      { return f.stores }
-func (f *fakeState) MailProvider(rig string) mail.Provider   { return f.mailProvs[rig] }
-func (f *fakeState) MailProviders() map[string]mail.Provider { return f.mailProvs }
+func (f *fakeState) MailProvider(_ string) mail.Provider { return f.cityMailProv }
+func (f *fakeState) MailProviders() map[string]mail.Provider {
+	if f.cityMailProv == nil {
+		return map[string]mail.Provider{}
+	}
+	return map[string]mail.Provider{f.cityName: f.cityMailProv}
+}
 func (f *fakeState) EventProvider() events.Provider          { return f.eventProv }
 func (f *fakeState) CityName() string                        { return f.cityName }
 func (f *fakeState) CityPath() string                        { return f.cityPath }
