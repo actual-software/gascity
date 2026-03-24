@@ -286,6 +286,10 @@ export interface FormulasExecuteMutateResult extends Omit<MutateResult, "ok" | "
   payload: FormulasExecuteResponse;
 }
 
+// Preferred alias for the sling-backed launch path. Keep the legacy
+// FormulasExecute names for compatibility while the rollout converges.
+export type OrdersLaunchMutateResult = FormulasExecuteMutateResult;
+
 export interface FormulasExecuteRequest {
   scope_kind: ScopeKind;
   scope_ref: string;
@@ -294,6 +298,8 @@ export interface FormulasExecuteRequest {
   vars: Record<string, string>;
   attached_bead_id?: string;
 }
+
+export type OrdersLaunchRequest = FormulasExecuteRequest;
 
 export interface FormulasExecuteResponse {
   workflow_id: string;
@@ -304,3 +310,5 @@ export interface FormulasExecuteResponse {
   scope_kind: ScopeKind;
   scope_ref: string;
 }
+
+export type OrdersLaunchResponse = FormulasExecuteResponse;

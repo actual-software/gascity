@@ -45,6 +45,9 @@ var ordersV2TypeExports = []string{
 	"OrdersFeedRefresh",
 	"MutateResult",
 	"FormulasExecuteMutateResult",
+	"OrdersLaunchMutateResult",
+	"OrdersLaunchRequest",
+	"OrdersLaunchResponse",
 }
 
 var ordersV2TypeSnippets = []string{
