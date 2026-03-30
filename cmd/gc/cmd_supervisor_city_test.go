@@ -77,6 +77,8 @@ func TestRegisterCityWithSupervisorKeepsRegistrationWhenCityNeverBecomesReady(t 
 
 	var stdout, stderr bytes.Buffer
 	code := registerCityWithSupervisor(cityPath, &stdout, &stderr, "gc register", true)
+	// The command reports failure (exit code 1) when the city doesn't start,
+	// but keeps the registration so the supervisor can retry automatically.
 	if code != 1 {
 		t.Fatalf("registerCityWithSupervisor code = %d, want 1", code)
 	}
@@ -181,8 +183,11 @@ func TestRegisterCityWithSupervisorWaitsForConfiguredStartupTimeout(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Path != cityPath {
-		t.Fatalf("expected retained registry entry for %s, got %v", cityPath, entries)
+	// Registry.Register resolves symlinks (e.g. /var → /private/var on macOS),
+	// so compare against the resolved path.
+	resolvedCityPath, _ := filepath.EvalSymlinks(cityPath)
+	if len(entries) != 1 || entries[0].Path != resolvedCityPath {
+		t.Fatalf("expected retained registry entry for %s, got %v", resolvedCityPath, entries)
 	}
 }
 
@@ -341,8 +346,11 @@ func TestUnregisterCityFromSupervisorRestoresRegistrationOnReloadFailure(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Path != cityPath {
-		t.Fatalf("expected restored registry entry for %s, got %v", cityPath, entries)
+	// Registry.Register resolves symlinks (e.g. /var → /private/var on macOS),
+	// so compare against the resolved path.
+	resolvedCityPath, _ := filepath.EvalSymlinks(cityPath)
+	if len(entries) != 1 || entries[0].Path != resolvedCityPath {
+		t.Fatalf("expected restored registry entry for %s, got %v", resolvedCityPath, entries)
 	}
 }
 
@@ -554,6 +562,67 @@ func TestReconcileCitiesNameDriftStopsBeadsProvider(t *testing.T) {
 	}
 	if !strings.HasPrefix(ops[0], "stop") {
 		t.Fatalf("unexpected bead provider op: %v", ops)
+	}
+}
+
+func TestSupervisorCreatesControllerSocketForManagedCity(t *testing.T) {
+	gcHome := t.TempDir()
+	t.Setenv("GC_HOME", gcHome)
+
+	cityPath := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cityPath, ".gc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityPath, "city.toml"),
+		[]byte("[workspace]\nname = \"test-city\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	logFile := filepath.Join(t.TempDir(), "ops.log")
+	script := writeSpyScript(t, logFile)
+	t.Setenv("GC_BEADS", "exec:"+script)
+
+	reg := supervisor.NewRegistry(supervisor.RegistryPath())
+	if err := reg.Register(cityPath, "test-city"); err != nil {
+		t.Fatal(err)
+	}
+
+	cr := newCityRegistry()
+	var stdout, stderr bytes.Buffer
+	reconcileCities(reg, cr, supervisor.PublicationConfig{}, &stdout, &stderr)
+
+	sockPath := filepath.Join(cityPath, ".gc", "controller.sock")
+	if _, err := os.Stat(sockPath); err != nil {
+		t.Fatalf("controller.sock not created at %s after reconcileCities: %v", sockPath, err)
+	}
+
+	if pid := controllerAlive(cityPath); pid == 0 {
+		t.Fatal("controller socket exists but does not respond to ping")
+	}
+
+	// Verify convergence commands are routed through the event loop.
+	// An unknown command returns a domain error rather than the "no bead store"
+	// sentinel, proving the full socket → event-loop → handler path is wired.
+	reply, err := sendConvergenceRequest(cityPath, convergenceRequest{
+		Command: "list", // not a valid command; exercises the handler dispatch path
+	})
+	if err != nil {
+		t.Fatalf("sendConvergenceRequest: %v", err)
+	}
+	if strings.Contains(reply.Error, "convergence not available") {
+		t.Fatalf("convergence event loop wired but convHandler is nil; got: %q", reply.Error)
+	}
+	if !strings.Contains(reply.Error, "unknown convergence command") {
+		t.Fatalf("expected 'unknown convergence command' error, got: %q", reply.Error)
+	}
+
+	// Cleanup: cancel the city goroutine and wait for it to exit.
+	if done := cr.CancelCity(cityPath); done != nil {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("city goroutine did not exit in time")
+		}
 	}
 }
 

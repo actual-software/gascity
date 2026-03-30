@@ -40,6 +40,7 @@ func (s *Server) handleBeadList(w http.ResponseWriter, r *http.Request) {
 	} else {
 		rigNames = sortedRigNames(stores)
 	}
+	setDataSource(r, "bd_subprocess")
 	var all []beads.Bead
 	for _, rigName := range rigNames {
 		store := stores[rigName]

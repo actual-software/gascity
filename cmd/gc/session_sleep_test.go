@@ -791,6 +791,8 @@ func TestReconcileSessionBeads_WakesDependenciesForHardWakeRoots(t *testing.T) {
 	apiSession := env.createSessionBead("api", "api")
 	cfgNames := configuredSessionNames(env.cfg, "", env.store)
 
+	// With WakeWork removed, demand is expressed via poolDesired which
+	// makes the session config-eligible and overrides sleep suppression.
 	got := reconcileSessionBeads(
 		context.Background(),
 		[]beads.Bead{dbSession, apiSession},

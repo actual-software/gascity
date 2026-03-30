@@ -409,8 +409,7 @@ func (s *Server) enrichSessionResponse(resp *sessionResponse, info session.Info,
 			searchPaths = sessionlog.DefaultSearchPaths()
 		}
 		// Prefer session-key lookup to avoid cross-reading another session's transcript.
-		// Without a session_key, workdir-based fallback is ambiguous when multiple
-		// sessions share a directory — skip enrichment rather than risk cross-contamination.
+		// Cache the resolved file path — session files don't move once created.
 		var sessionFile string
 		if info.SessionKey != "" {
 			sessionFile = sessionlog.FindSessionFileByID(searchPaths, workDir, info.SessionKey)

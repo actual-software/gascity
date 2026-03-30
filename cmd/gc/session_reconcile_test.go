@@ -219,6 +219,66 @@ func TestWakeReasons_PoolExceedsDesired(t *testing.T) {
 	}
 }
 
+func TestWakeReasons_StaleCreatingWithoutPendingClaimDoesNotWakeCreate(t *testing.T) {
+	now := time.Date(2026, 3, 29, 4, 0, 0, 0, time.UTC)
+	clk := &clock.Fake{Time: now}
+
+	session := makeBead("b1", map[string]string{
+		"template":     "worker",
+		"session_name": "worker-b1",
+		"state":        "creating",
+	})
+	session.CreatedAt = now.Add(-2 * time.Minute)
+
+	reasons := wakeReasons(session, &config.City{}, nil, nil, nil, nil, clk)
+	if containsWakeReason(reasons, WakeCreate) {
+		t.Fatalf("stale creating session should not wake for create, got %v", reasons)
+	}
+}
+
+func TestWakeReasons_FreshCreatingWithoutPendingClaimStillWakesCreate(t *testing.T) {
+	now := time.Date(2026, 3, 29, 4, 0, 0, 0, time.UTC)
+	clk := &clock.Fake{Time: now}
+
+	session := makeBead("b1", map[string]string{
+		"template":     "worker",
+		"session_name": "worker-b1",
+		"state":        "creating",
+	})
+	session.CreatedAt = now.Add(-30 * time.Second)
+
+	reasons := wakeReasons(session, &config.City{}, nil, nil, nil, nil, clk)
+	if !containsWakeReason(reasons, WakeCreate) {
+		t.Fatalf("fresh creating session should wake for create, got %v", reasons)
+	}
+}
+
+func TestWakeReasons_DrainedSleepPoolSessionDoesNotGetWakeConfig(t *testing.T) {
+	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
+	clk := &clock.Fake{Time: now}
+
+	cfg := &config.City{
+		Agents: []config.Agent{
+			{Name: "worker", Pool: &config.PoolConfig{Min: 1, Max: 5}},
+		},
+	}
+
+	session := makeBead("b1", map[string]string{
+		"template":     "worker",
+		"session_name": "test-worker-1",
+		"pool_slot":    "1",
+		"state":        "asleep",
+		"sleep_reason": "drained",
+	})
+
+	reasons := wakeReasons(session, cfg, nil, map[string]int{"worker": 3}, nil, nil, clk)
+	for _, reason := range reasons {
+		if reason == WakeConfig {
+			t.Fatalf("drained sleep session should not get WakeConfig, got %v", reasons)
+		}
+	}
+}
+
 func TestWakeReasons_Attached(t *testing.T) {
 	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
 	clk := &clock.Fake{Time: now}
@@ -893,26 +953,86 @@ func TestIsPoolExcess(t *testing.T) {
 
 func TestHealState(t *testing.T) {
 	store := newTestStore()
+	clk := &clock.Fake{Time: time.Date(2026, 3, 29, 4, 0, 0, 0, time.UTC)}
 
 	session := makeBead("b1", map[string]string{
 		"state": "asleep",
 	})
 
-	healState(&session, true, store)
+	healState(&session, true, store, clk)
 	if session.Metadata["state"] != "awake" {
 		t.Errorf("state = %q, want awake", session.Metadata["state"])
 	}
 
-	healState(&session, false, store)
+	healState(&session, false, store, clk)
 	if session.Metadata["state"] != "asleep" {
 		t.Errorf("state = %q, want asleep", session.Metadata["state"])
 	}
 
 	// No-op when already correct.
 	prevCalls := len(store.metadata["b1"])
-	healState(&session, false, store)
+	healState(&session, false, store, clk)
 	if len(store.metadata["b1"]) != prevCalls {
 		t.Error("healState should not write when state unchanged")
+	}
+}
+
+func TestHealState_DeadActiveHealsToAsleep(t *testing.T) {
+	store := newTestStore()
+	clk := &clock.Fake{Time: time.Date(2026, 3, 29, 4, 0, 0, 0, time.UTC)}
+
+	session := makeBead("b1", map[string]string{
+		"state": "active",
+	})
+
+	healState(&session, false, store, clk)
+	if session.Metadata["state"] != "asleep" {
+		t.Fatalf("state = %q, want asleep", session.Metadata["state"])
+	}
+}
+
+func TestHealState_PreservesCreatingWhileStartRequested(t *testing.T) {
+	store := newTestStore()
+	clk := &clock.Fake{Time: time.Date(2026, 3, 29, 4, 0, 0, 0, time.UTC)}
+
+	session := makeBead("b1", map[string]string{
+		"state":                "creating",
+		"pending_create_claim": "true",
+	})
+
+	healState(&session, false, store, clk)
+	if session.Metadata["state"] != "creating" {
+		t.Fatalf("state = %q, want creating", session.Metadata["state"])
+	}
+}
+
+func TestHealState_PreservesFreshCreatingWithoutPendingClaim(t *testing.T) {
+	store := newTestStore()
+	clk := &clock.Fake{Time: time.Date(2026, 3, 29, 4, 0, 0, 0, time.UTC)}
+
+	session := makeBead("b1", map[string]string{
+		"state": "creating",
+	})
+	session.CreatedAt = clk.Now().Add(-30 * time.Second)
+
+	healState(&session, false, store, clk)
+	if session.Metadata["state"] != "creating" {
+		t.Fatalf("state = %q, want creating", session.Metadata["state"])
+	}
+}
+
+func TestHealState_StaleCreatingWithoutPendingClaimHealsToAsleep(t *testing.T) {
+	store := newTestStore()
+	clk := &clock.Fake{Time: time.Date(2026, 3, 29, 4, 0, 0, 0, time.UTC)}
+
+	session := makeBead("b1", map[string]string{
+		"state": "creating",
+	})
+	session.CreatedAt = clk.Now().Add(-2 * time.Minute)
+
+	healState(&session, false, store, clk)
+	if session.Metadata["state"] != "asleep" {
+		t.Fatalf("state = %q, want asleep", session.Metadata["state"])
 	}
 }
 

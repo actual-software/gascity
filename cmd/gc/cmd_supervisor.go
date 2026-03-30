@@ -20,11 +20,13 @@ import (
 	"github.com/gastownhall/gascity/internal/api"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/convergence"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/hooks"
 	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/gastownhall/gascity/internal/supervisor"
+	"github.com/gastownhall/gascity/internal/telemetry"
 	"github.com/gastownhall/gascity/internal/workspacesvc"
 	"github.com/spf13/cobra"
 )
@@ -124,8 +126,21 @@ func acquireSupervisorLock() (*os.File, error) {
 }
 
 // supervisorSocketPath returns the path to the supervisor control socket.
+//
+// Guard: in test binaries, the resolved path must not point to the host's
+// real runtime directory. The DefaultHome/RuntimeDir guards catch most
+// cases, but this adds defense-in-depth for the socket specifically.
 func supervisorSocketPath() string {
-	return filepath.Join(supervisor.RuntimeDir(), "supervisor.sock")
+	dir := supervisor.RuntimeDir()
+	if isTestBinary() {
+		if home, herr := os.UserHomeDir(); herr == nil {
+			hostGC := filepath.Join(home, ".gc")
+			if strings.HasPrefix(dir, hostGC+string(filepath.Separator)) || dir == hostGC {
+				panic("supervisorSocketPath: refusing to connect to host supervisor socket during tests")
+			}
+		}
+	}
+	return filepath.Join(dir, "supervisor.sock")
 }
 
 // startSupervisorSocket creates a Unix domain socket at the given path
@@ -891,6 +906,9 @@ func reconcileCities(
 		done := make(chan struct{})
 		mc := &managedCity{name: cityName, cancel: cityCancel, done: done, closer: fr}
 
+		convergenceReqCh := make(chan convergenceRequest, 16)
+		workflowControlCh := make(chan struct{}, 1)
+
 		var cityRuntime *CityRuntime
 		if err := runPostPrepareStep("building_city_runtime", func() error {
 			cityRuntime = newCityRuntime(CityRuntimeParams{
@@ -908,7 +926,9 @@ func reconcileCities(
 				Rec:                     rec,
 				PoolSessions:            poolSessions,
 				PoolDeathHandlers:       poolDeathHandlers,
+				ConvergenceReqCh:        convergenceReqCh,
 				PokeCh:                  pokeCh,
+				WorkflowControlCh:       workflowControlCh,
 				OnStarted: func() {
 					cr.UpdateCallback(path, func(m *managedCity) {
 						m.started = true
@@ -974,7 +994,117 @@ func reconcileCities(
 			continue
 		}
 
-		go func(n, p string, cityFr *events.FileRecorder) {
+		// Acquire controller lock to prevent split-brain with standalone
+		// controllers (mirrors runController in controller.go).
+		lock, lockErr := acquireControllerLock(path)
+		if lockErr != nil {
+			fmt.Fprintf(stderr, "gc supervisor: city '%s': controller lock: %v\n", cityName, lockErr) //nolint:errcheck
+			cityCancel()
+			cityRuntime.shutdown()
+			if fr != nil {
+				fr.Close() //nolint:errcheck
+			}
+			cr.BatchUpdate(func(
+				cities map[string]*managedCity,
+				_ map[string]cityInitProgress,
+				_ map[string]*initFailRecord,
+				_ map[string]*panicRecord,
+			) {
+				delete(cities, path)
+			})
+			recordInitFailure(cityName, fmt.Sprintf("controller lock: %v", lockErr))
+			continue
+		}
+
+		// Start controller socket AFTER the alreadyRunning check so we
+		// never destroy a live city's socket or leak a listener.
+		sockPath := filepath.Join(path, ".gc", "controller.sock")
+		lis, lisErr := startControllerSocket(path, cityCancel, convergenceReqCh, pokeCh, workflowControlCh)
+		if lisErr != nil {
+			fmt.Fprintf(stderr, "gc supervisor: city '%s': controller socket: %v\n", cityName, lisErr) //nolint:errcheck
+			lock.Close()                                                                               //nolint:errcheck // no socket to race with
+			cityCancel()
+			cityRuntime.shutdown()
+			if fr != nil {
+				fr.Close() //nolint:errcheck
+			}
+			cr.BatchUpdate(func(
+				cities map[string]*managedCity,
+				_ map[string]cityInitProgress,
+				_ map[string]*initFailRecord,
+				_ map[string]*panicRecord,
+			) {
+				delete(cities, path)
+			})
+			recordInitFailure(cityName, fmt.Sprintf("controller socket: %v", lisErr))
+			continue
+		}
+
+		// Generate controller token for convergence ACL
+		// (mirrors runController in controller.go).
+		controllerToken, tokenErr := convergence.GenerateToken()
+		if tokenErr != nil {
+			fmt.Fprintf(stderr, "gc supervisor: city '%s': controller token: %v\n", cityName, tokenErr) //nolint:errcheck
+			lis.Close()                                                                                 //nolint:errcheck
+			os.Remove(sockPath)                                                                         //nolint:errcheck
+			lock.Close()                                                                                //nolint:errcheck // lock released last
+			cityCancel()
+			cityRuntime.shutdown()
+			if fr != nil {
+				fr.Close() //nolint:errcheck
+			}
+			cr.BatchUpdate(func(
+				cities map[string]*managedCity,
+				_ map[string]cityInitProgress,
+				_ map[string]*initFailRecord,
+				_ map[string]*panicRecord,
+			) {
+				delete(cities, path)
+			})
+			recordInitFailure(cityName, fmt.Sprintf("controller token: %v", tokenErr))
+			continue
+		}
+		_ = controllerToken // available for future waves via function parameters
+		if err := convergence.WriteToken(path, controllerToken); err != nil {
+			fmt.Fprintf(stderr, "gc supervisor: city '%s': writing controller token: %v\n", cityName, err) //nolint:errcheck
+			lis.Close()                                                                                    //nolint:errcheck
+			os.Remove(sockPath)                                                                            //nolint:errcheck
+			lock.Close()                                                                                   //nolint:errcheck // lock released last
+			cityCancel()
+			cityRuntime.shutdown()
+			if fr != nil {
+				fr.Close() //nolint:errcheck
+			}
+			cr.BatchUpdate(func(
+				cities map[string]*managedCity,
+				_ map[string]cityInitProgress,
+				_ map[string]*initFailRecord,
+				_ map[string]*panicRecord,
+			) {
+				delete(cities, path)
+			})
+			recordInitFailure(cityName, fmt.Sprintf("controller token write: %v", err))
+			continue
+		}
+
+		// Capture the socket's os.FileInfo so the goroutine can perform
+		// ownership-safe socket removal on exit via os.SameFile — a
+		// replacement city that re-bound the same path won't have its
+		// socket unlinked. Uses os.SameFile for cross-platform safety.
+		sockInfo, _ := os.Stat(sockPath)
+
+		// Disable automatic socket unlinking on listener close so our
+		// ownership-safe removal logic is the sole path for cleanup.
+		// Without this, l.Close() unconditionally unlinks the socket
+		// file, defeating the SameFile check.
+		if ul, ok := lis.(*net.UnixListener); ok {
+			ul.SetUnlinkOnClose(false)
+		}
+
+		go func(n, p string, cityFr *events.FileRecorder, l net.Listener, sock string, origSockInfo os.FileInfo, lk *os.File) {
+			// Recovery and close(done) defer is pushed FIRST so it
+			// executes LAST (Go LIFO), preserving the invariant that
+			// completion is signaled only after all resource cleanup.
 			defer func() {
 				if r := recover(); r != nil {
 					fmt.Fprintf(stderr, "gc supervisor: city '%s' panicked: %v\n", n, r) //nolint:errcheck
@@ -1037,11 +1167,76 @@ func reconcileCities(
 				// waiters (shutdown/unregister paths) proceed.
 				close(done)
 			}()
+			// Resource cleanup defers pushed AFTER recovery/done so they
+			// execute BEFORE it in LIFO order: resources are released,
+			// then done is closed.
+			defer lk.Close()                 //nolint:errcheck // release controller lock (last released)
+			defer convergence.RemoveToken(p) //nolint:errcheck // best-effort cleanup
+			defer func() {
+				// Ownership-safe socket removal: only unlink if the
+				// on-disk file is the same one we created, so a
+				// replacement city's socket is never destroyed.
+				if origSockInfo != nil {
+					if cur, err := os.Stat(sock); err == nil {
+						if os.SameFile(origSockInfo, cur) {
+							os.Remove(sock) //nolint:errcheck
+						}
+					}
+				}
+			}()
+			defer l.Close() //nolint:errcheck // close listener (after socket removal)
+			defer telemetry.RecordControllerLifecycle(context.Background(), "stopped")
 			cityRuntime.run(cityCtx)
-		}(cityName, path, fr)
+		}(cityName, path, fr, lis, sockPath, sockInfo, lock)
 
 		rec.Record(events.Event{Type: events.ControllerStarted, Actor: "gc"})
+		telemetry.RecordControllerLifecycle(context.Background(), "started")
 		fmt.Fprintf(stdout, "Launching city '%s' (%s)\n", cityName, path) //nolint:errcheck
+	}
+
+	// Reconcile the global rig index from all registered cities.
+	reconcileRigIndex(reg, stderr)
+}
+
+// reconcileRigIndex rebuilds the [[rigs]] section of cities.toml from the
+// rig definitions in each registered city's city.toml.
+func reconcileRigIndex(reg *supervisor.Registry, stderr io.Writer) {
+	cities, err := reg.List()
+	if err != nil {
+		return
+	}
+
+	var mappings []supervisor.RigCityMapping
+	var loadFailed bool
+	for _, c := range cities {
+		cfg, err := loadCityConfig(c.Path)
+		if err != nil {
+			// Abort reconciliation if any city can't be loaded — a partial
+			// snapshot would cause ReconcileRigs to drop rigs from the
+			// errored city.
+			fmt.Fprintf(stderr, "gc supervisor: skipping rig reconcile: city %q config error: %v\n", c.EffectiveName(), err) //nolint:errcheck
+			loadFailed = true
+			break
+		}
+		for _, rig := range cfg.Rigs {
+			rigPath := rig.Path
+			if !filepath.IsAbs(rigPath) {
+				rigPath = filepath.Join(c.Path, rigPath)
+			}
+			rigPath = filepath.Clean(rigPath)
+			mappings = append(mappings, supervisor.RigCityMapping{
+				RigPath:  rigPath,
+				RigName:  rig.Name,
+				CityPath: c.Path,
+			})
+		}
+	}
+
+	if loadFailed {
+		return
+	}
+	if err := reg.ReconcileRigs(mappings); err != nil {
+		fmt.Fprintf(stderr, "gc supervisor: reconciling rig index: %v\n", err) //nolint:errcheck
 	}
 }
 
@@ -1088,7 +1283,7 @@ func prepareCityForSupervisor(cityPath, cityName string, cfg *config.City, stder
 	}
 
 	// Validate rigs.
-	if err := config.ValidateRigs(cfg.Rigs, cityName); err != nil {
+	if err := config.ValidateRigs(cfg.Rigs, config.EffectiveHQPrefix(cfg)); err != nil {
 		return fmt.Errorf("validate rigs: %w", err)
 	}
 	if err := config.ValidateServices(cfg.Services); err != nil {

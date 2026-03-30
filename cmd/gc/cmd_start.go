@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -370,7 +371,7 @@ func doStartStandalone(args []string, controllerMode bool, stdout, stderr io.Wri
 	}
 
 	// Validate rigs (prefix collisions, missing fields).
-	if err := config.ValidateRigs(cfg.Rigs, cityName); err != nil {
+	if err := config.ValidateRigs(cfg.Rigs, config.EffectiveHQPrefix(cfg)); err != nil {
 		fmt.Fprintf(stderr, "gc start: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
@@ -646,9 +647,9 @@ func printDryRunPreview(desiredState map[string]TemplateParams, cfg *config.City
 }
 
 // settingsArgs returns "--settings <path>" to append to a Claude command
-// if settings.json exists for this city. Uses a path relative to the session
-// working directory so it works for both local and remote providers (the
-// .gc directory is staged via CopyFiles).
+// if settings.json exists for this city. Uses the absolute city-root path so
+// it resolves correctly regardless of the session's working directory. The K8s
+// provider remaps city-root references to /workspace automatically.
 // Returns empty string for non-Claude providers or if no settings file is present.
 func settingsArgs(cityPath, providerName string) string {
 	if providerName != "claude" {
@@ -658,7 +659,7 @@ func settingsArgs(cityPath, providerName string) string {
 	if _, err := os.Stat(settingsPath); err != nil {
 		return ""
 	}
-	return "--settings .gc/settings.json"
+	return fmt.Sprintf("--settings %q", filepath.Join(cityPath, ".gc", "settings.json"))
 }
 
 // stageHookFiles adds hook files installed by hooks.Install() to the
@@ -666,31 +667,44 @@ func settingsArgs(cityPath, providerName string) string {
 // Docker doesn't need this (bind-mount), but the extra entries are harmless.
 // Avoids duplicating .gc/settings.json if settingsArgs already added it.
 func stageHookFiles(copyFiles []runtime.CopyEntry, cityPath, workDir string) []runtime.CopyEntry {
+	// Compute the relative path from cityPath to workDir so that
+	// container-side RelDst places files under the agent's WorkingDir
+	// (/workspace/<relWorkDir>/), not always at /workspace/.
+	// When workDir == cityPath, relWorkDir is "." and path.Join collapses it.
+	relWorkDir := "."
+	if workDir != cityPath {
+		if r, err := filepath.Rel(cityPath, workDir); err == nil {
+			relWorkDir = r
+		}
+	}
+
 	// workDir-based hooks: gemini, codex, opencode, copilot, pi, omp.
+	// Use path.Join for RelDst (container-target, always forward slashes).
 	for _, rel := range []string{
-		filepath.Join(".gemini", "settings.json"),
-		filepath.Join(".codex", "hooks.json"),
-		filepath.Join(".opencode", "plugins", "gascity.js"),
-		filepath.Join(".github", "hooks", "gascity.json"),
-		filepath.Join(".github", "copilot-instructions.md"),
-		filepath.Join(".pi", "extensions", "gc-hooks.js"),
-		filepath.Join(".omp", "hooks", "gc-hook.ts"),
+		path.Join(".gemini", "settings.json"),
+		path.Join(".codex", "hooks.json"),
+		path.Join(".opencode", "plugins", "gascity.js"),
+		path.Join(".github", "hooks", "gascity.json"),
+		path.Join(".github", "copilot-instructions.md"),
+		path.Join(".pi", "extensions", "gc-hooks.js"),
+		path.Join(".omp", "hooks", "gc-hook.ts"),
 	} {
 		abs := filepath.Join(workDir, rel)
 		if _, err := os.Stat(abs); err == nil {
-			copyFiles = append(copyFiles, runtime.CopyEntry{Src: abs, RelDst: rel})
+			copyFiles = append(copyFiles, runtime.CopyEntry{Src: abs, RelDst: path.Join(relWorkDir, rel)})
 		}
 	}
 	// Stage Claude skills directory (if materialized).
 	skillsDir := filepath.Join(workDir, ".claude", "skills")
 	if info, err := os.Stat(skillsDir); err == nil && info.IsDir() {
 		copyFiles = append(copyFiles, runtime.CopyEntry{
-			Src: skillsDir, RelDst: filepath.Join(".claude", "skills"),
+			Src: skillsDir, RelDst: path.Join(relWorkDir, ".claude", "skills"),
 		})
 	}
 	// cityDir-based hooks: claude (.gc/settings.json).
 	// Skip if settingsArgs already added it.
-	settingsRel := filepath.Join(".gc", "settings.json")
+	// These are city-root relative, so no relWorkDir prefix needed.
+	settingsRel := path.Join(".gc", "settings.json")
 	settingsAbs := citylayout.ClaudeHookFilePath(cityPath)
 	if _, err := os.Stat(settingsAbs); err == nil {
 		alreadyStaged := false

@@ -44,7 +44,7 @@ func evaluateWakeReasons(
 	cfg *config.City,
 	sp runtime.Provider,
 	poolDesired map[string]int,
-	workSet map[string]bool,
+	_ map[string]bool, // workSet — reserved for future demand-aware wake logic
 	readyWaitSet map[string]bool,
 	clk clock.Clock,
 ) wakeEvaluation {
@@ -73,7 +73,7 @@ func evaluateWakeReasons(
 	if readyWaitSet != nil && readyWaitSet[session.ID] {
 		reasons = append(reasons, WakeWait)
 	}
-	if sessionStartRequested(session) {
+	if sessionStartRequested(session, clk) {
 		reasons = append(reasons, WakeCreate)
 	}
 
@@ -119,6 +119,9 @@ func sessionWithinDesiredConfig(session beads.Bead, cfg *config.City, poolDesire
 	if agent == nil {
 		return nil, false
 	}
+	if isDrainedSessionBead(session) {
+		return agent, false
+	}
 	if session.Metadata["dependency_only"] == "true" {
 		return agent, false
 	}
@@ -137,15 +140,24 @@ func sessionWithinDesiredConfig(session beads.Bead, cfg *config.City, poolDesire
 	return agent, slot > 0 && slot <= desired
 }
 
-func sessionStartRequested(session beads.Bead) bool {
-	return strings.TrimSpace(session.Metadata["state"]) == "creating" ||
-		strings.TrimSpace(session.Metadata["pending_create_claim"]) == "true"
+func sessionStartRequested(session beads.Bead, clk clock.Clock) bool {
+	if strings.TrimSpace(session.Metadata["pending_create_claim"]) == "true" {
+		return true
+	}
+	if strings.TrimSpace(session.Metadata["state"]) != "creating" {
+		return false
+	}
+	return !staleCreatingState(session, clk)
 }
+
+const staleCreatingStateTimeout = time.Minute
 
 func sessionMetadataState(session beads.Bead) string {
 	switch state := strings.TrimSpace(session.Metadata["state"]); state {
 	case "awake":
 		return "active"
+	case "drained":
+		return "asleep"
 	default:
 		return state
 	}
@@ -217,6 +229,9 @@ func applyDependencyWakeReasons(sessions []beads.Bead, cfg *config.City, evals m
 func preferredDependencySessions(sessions []beads.Bead, cfg *config.City) map[string]beads.Bead {
 	preferred := make(map[string]beads.Bead)
 	for _, session := range sessions {
+		if isDrainedSessionBead(session) {
+			continue
+		}
 		template := normalizedSessionTemplate(session, cfg)
 		if template == "" {
 			continue
@@ -480,17 +495,27 @@ func isPoolExcess(session beads.Bead, cfg *config.City, poolDesired map[string]i
 }
 
 // healState updates advisory state metadata only when changed (dirty check).
-func healState(session *beads.Bead, alive bool, store beads.Store) {
+func healState(session *beads.Bead, alive bool, store beads.Store, clk clock.Clock) {
+	if session != nil && !alive && strings.TrimSpace(session.Metadata["state"]) == "drained" {
+		batch := map[string]string{"state": "asleep"}
+		if strings.TrimSpace(session.Metadata["sleep_reason"]) == "" {
+			batch["sleep_reason"] = "drained"
+		}
+		if err := store.SetMetadataBatch(session.ID, batch); err == nil {
+			if session.Metadata == nil {
+				session.Metadata = make(map[string]string, len(batch))
+			}
+			for k, v := range batch {
+				session.Metadata[k] = v
+			}
+		}
+		return
+	}
 	target := "asleep"
 	if alive {
 		target = "awake"
-	} else if session != nil {
-		switch {
-		case sessionStartRequested(*session):
-			target = "creating"
-		case strings.TrimSpace(session.Metadata["state"]) == "active":
-			target = "active"
-		}
+	} else if session != nil && sessionStartRequested(*session, clk) {
+		target = "creating"
 	}
 	if session.Metadata == nil {
 		session.Metadata = make(map[string]string)
@@ -499,6 +524,16 @@ func healState(session *beads.Bead, alive bool, store beads.Store) {
 		_ = store.SetMetadata(session.ID, "state", target)
 		session.Metadata["state"] = target
 	}
+}
+
+func staleCreatingState(session beads.Bead, clk clock.Clock) bool {
+	if clk == nil {
+		return false
+	}
+	if session.CreatedAt.IsZero() {
+		return true
+	}
+	return !clk.Now().Before(session.CreatedAt.Add(staleCreatingStateTimeout))
 }
 
 // topoOrder returns session beads in dependency order (dependencies first).

@@ -13,6 +13,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -119,11 +120,11 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 	if sa := settingsArgs(p.cityPath, resolved.Name); sa != "" {
 		command = command + " " + sa
 		settingsFile := citylayout.ClaudeHookFilePath(p.cityPath)
-		copyFiles = append(copyFiles, runtime.CopyEntry{Src: settingsFile, RelDst: filepath.Join(".gc", "settings.json")})
+		copyFiles = append(copyFiles, runtime.CopyEntry{Src: settingsFile, RelDst: path.Join(".gc", "settings.json")})
 	}
 	scriptsDir := citylayout.ScriptsPath(p.cityPath)
 	if info, sErr := os.Stat(scriptsDir); sErr == nil && info.IsDir() {
-		copyFiles = append(copyFiles, runtime.CopyEntry{Src: scriptsDir, RelDst: filepath.Join(".gc", "scripts")})
+		copyFiles = append(copyFiles, runtime.CopyEntry{Src: scriptsDir, RelDst: path.Join(".gc", "scripts")})
 	}
 	copyFiles = stageHookFiles(copyFiles, p.cityPath, workDir)
 
@@ -187,7 +188,18 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 	if exe, err := os.Executable(); err == nil && exe != "" {
 		agentEnv["GC_BIN"] = exe
 	}
-	if port := currentDoltPort(p.cityPath); port != "" {
+	// Inject dolt config from per-city config map (set by
+	// startBeadsLifecycle) so agents connect to the right server.
+	// For external hosts, host/port come from config; for local
+	// managed Dolt, port comes from runtime state files.
+	if host := doltHostForCity(p.cityPath); host != "" {
+		agentEnv["GC_DOLT_HOST"] = host
+	}
+	if isExternalDolt(p.cityPath) {
+		if port := doltPortForCity(p.cityPath); port != "" {
+			agentEnv["GC_DOLT_PORT"] = port
+		}
+	} else if port := currentDoltPort(p.cityPath); port != "" {
 		agentEnv["GC_DOLT_PORT"] = port
 	}
 	if rigName != "" {
@@ -291,12 +303,17 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 // produce identical output.
 func templateParamsToConfig(tp TemplateParams) runtime.Config {
 	var promptSuffix string
+	var promptFlag string
 	if tp.Prompt != "" {
 		promptSuffix = shellquote.Quote(tp.Prompt)
+		if tp.ResolvedProvider != nil && tp.ResolvedProvider.PromptMode == "flag" && tp.ResolvedProvider.PromptFlag != "" {
+			promptFlag = tp.ResolvedProvider.PromptFlag
+		}
 	}
 	return runtime.Config{
 		Command:                tp.Command,
 		PromptSuffix:           promptSuffix,
+		PromptFlag:             promptFlag,
 		Env:                    tp.Env,
 		WorkDir:                tp.WorkDir,
 		ReadyPromptPrefix:      tp.Hints.ReadyPromptPrefix,

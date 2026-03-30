@@ -156,7 +156,11 @@ func (p *Provider) Start(ctx context.Context, name string, cfg runtime.Config) e
 
 	command := cfg.Command
 	if cfg.PromptSuffix != "" {
-		command = command + " " + cfg.PromptSuffix
+		if cfg.PromptFlag != "" {
+			command = command + " " + cfg.PromptFlag + " " + cfg.PromptSuffix
+		} else {
+			command = command + " " + cfg.PromptSuffix
+		}
 	}
 	if command == "" {
 		clearSentinel()

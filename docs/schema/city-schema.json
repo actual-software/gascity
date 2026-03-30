@@ -152,9 +152,21 @@
           "type": "object",
           "description": "Env sets additional environment variables for the agent process."
         },
+        "max_active_sessions": {
+          "type": "integer",
+          "description": "MaxActiveSessions is the agent-level cap on concurrent sessions.\nNil means inherit from rig, then workspace, then unlimited.\nReplaces pool.max."
+        },
+        "min_active_sessions": {
+          "type": "integer",
+          "description": "MinActiveSessions is the minimum number of sessions to keep alive.\nAgent-level only. Counts against rig/workspace caps. Replaces pool.min."
+        },
+        "scale_check": {
+          "type": "string",
+          "description": "ScaleCheck is a shell command whose output determines desired session count.\nOptional override — when set, its output is the desired count (still clamped\nby all cap levels). Replaces pool.check."
+        },
         "pool": {
           "$ref": "#/$defs/PoolConfig",
-          "description": "Pool configures elastic pool behavior. When set, the agent becomes a pool."
+          "description": "Pool configures elastic pool behavior (deprecated — use max_active_sessions,\nmin_active_sessions, scale_check instead). When set, values are used as\nfallbacks for the new fields."
         },
         "work_query": {
           "type": "string",
@@ -460,6 +472,18 @@
           },
           "type": "array",
           "description": "InjectFragmentsAppend appends to the agent's inject_fragments list."
+        },
+        "max_active_sessions": {
+          "type": "integer",
+          "description": "MaxActiveSessions overrides the agent-level cap on concurrent sessions."
+        },
+        "min_active_sessions": {
+          "type": "integer",
+          "description": "MinActiveSessions overrides the minimum number of sessions to keep alive."
+        },
+        "scale_check": {
+          "type": "string",
+          "description": "ScaleCheck overrides the shell command whose output determines desired session count."
         }
       },
       "additionalProperties": false,
@@ -645,6 +669,18 @@
           },
           "type": "array",
           "description": "InjectFragmentsAppend appends to the agent's inject_fragments list."
+        },
+        "max_active_sessions": {
+          "type": "integer",
+          "description": "MaxActiveSessions overrides the agent-level cap on concurrent sessions."
+        },
+        "min_active_sessions": {
+          "type": "integer",
+          "description": "MinActiveSessions overrides the minimum number of sessions to keep alive."
+        },
+        "scale_check": {
+          "type": "string",
+          "description": "ScaleCheck overrides the shell command whose output determines desired session count."
         }
       },
       "additionalProperties": false,
@@ -711,6 +747,13 @@
           },
           "type": "array",
           "description": "Agents lists all configured agents in this city."
+        },
+        "named_session": {
+          "items": {
+            "$ref": "#/$defs/NamedSession"
+          },
+          "type": "array",
+          "description": "NamedSessions lists canonical alias-backed sessions built from\nreusable agent templates."
         },
         "rigs": {
           "items": {
@@ -810,6 +853,10 @@
     },
     "DaemonConfig": {
       "properties": {
+        "graph_workflows": {
+          "type": "boolean",
+          "description": "GraphWorkflows enables formula v2 graph workflow infrastructure:\nthe workflow-control implicit agent, graph.v2 formula compilation,\nand batch graph-apply bead creation. Requires bd with --graph support.\nDefault: false (opt-in while the feature stabilizes)."
+        },
         "patrol_interval": {
           "type": "string",
           "description": "PatrolInterval is the health patrol interval. Duration string (e.g., \"30s\", \"5m\", \"1h\"). Defaults to \"30s\".",
@@ -949,6 +996,40 @@
       "additionalProperties": false,
       "type": "object",
       "description": "MailConfig holds mail provider settings."
+    },
+    "NamedSession": {
+      "properties": {
+        "template": {
+          "type": "string",
+          "description": "Template is the referenced agent template name."
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "city",
+            "rig"
+          ],
+          "description": "Scope defines where this named session is instantiated in pack\nexpansion: \"city\" (one per city) or \"rig\" (one per rig)."
+        },
+        "dir": {
+          "type": "string",
+          "description": "Dir is the identity prefix for rig-scoped named sessions after pack\nexpansion. Empty means city-scoped."
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "on_demand",
+            "always"
+          ],
+          "description": "Mode controls controller behavior for this named session.\n\"on_demand\" (default): reserve identity and materialize when work or\nan explicit reference requires it.\n\"always\": keep the canonical session controller-managed."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "template"
+      ],
+      "description": "NamedSession defines a canonical persistent session backed by an agent template."
     },
     "OptionChoice": {
       "properties": {
@@ -1406,6 +1487,10 @@
           "type": "array",
           "description": "Includes lists pack directories or URLs for this rig.\nReplaces the older pack/packs fields. Each entry is a\nlocal path, a git source//sub#ref URL, or a GitHub tree URL."
         },
+        "max_active_sessions": {
+          "type": "integer",
+          "description": "MaxActiveSessions is the rig-level cap on total concurrent sessions across\nall agents in this rig. Nil means inherit from workspace (or unlimited)."
+        },
         "overrides": {
           "items": {
             "$ref": "#/$defs/AgentOverride"
@@ -1642,6 +1727,10 @@
           "type": "string",
           "description": "Name is the human-readable name for this city."
         },
+        "prefix": {
+          "type": "string",
+          "description": "Prefix overrides the auto-derived HQ bead ID prefix. When empty,\nthe prefix is derived from the city Name via DeriveBeadsPrefix."
+        },
         "provider": {
           "type": "string",
           "description": "Provider is the default provider name used by agents that don't specify one."
@@ -1653,6 +1742,10 @@
         "suspended": {
           "type": "boolean",
           "description": "Suspended controls whether the city is suspended. When true, all\nagents are effectively suspended: the reconciler won't spawn them,\nand gc hook/prime return empty. Inherits downward — individual\nagent/rig suspended fields are checked independently."
+        },
+        "max_active_sessions": {
+          "type": "integer",
+          "description": "MaxActiveSessions is the workspace-level cap on total concurrent sessions.\nNil means unlimited. Agents and rigs inherit this if they don't set their own."
         },
         "session_template": {
           "type": "string",

@@ -171,7 +171,7 @@ func reconcileSessionBeads(
 		if !desired {
 			providerAlive := sp.IsRunning(name)
 			// Heal state using provider liveness, not agent membership.
-			healState(session, providerAlive, store)
+			healState(session, providerAlive, store, clk)
 			if providerAlive {
 				reason := "orphaned"
 				if configuredNames[name] {
@@ -216,9 +216,8 @@ func reconcileSessionBeads(
 		policy := resolveSessionSleepPolicy(*session, cfg, sp)
 
 		// Heal advisory state metadata.
-		healState(session, alive, store)
+		healState(session, alive, store, clk)
 		if recoverPendingIdleSleep(session, store, running, clk) {
-			running = false
 			alive = false
 		}
 		reconcileDetachedAt(session, store, policy, alive, sp, clk)
@@ -417,14 +416,17 @@ func reconcileSessionBeads(
 
 		if !shouldWake && target.alive {
 			// No reason to be awake — begin drain.
-			reason := "no-wake-reason"
 			intent := target.session.Metadata["sleep_intent"]
-			if intent == "idle-stop-pending" {
+			var reason string
+			switch {
+			case intent == "idle-stop-pending":
 				reason = "idle"
-			} else if intent != "" {
+			case intent != "":
 				reason = intent
-			} else if eval.ConfigSuppressed && eval.Policy.enabled() {
+			case eval.ConfigSuppressed && eval.Policy.enabled():
 				reason = "idle"
+			default:
+				reason = "no-wake-reason"
 			}
 			if reason != "idle" {
 				clearCompletedIdleProbe(target.session.ID, dt)
@@ -664,4 +666,20 @@ func resolveResumeCommand(command, sessionKey string, rp *config.ResolvedProvide
 	default: // "flag"
 		return command + " " + rp.ResumeFlag + " " + sessionKey
 	}
+}
+
+// derivePoolDesired computes pool desired counts from the desired state map.
+// Only pool agents with at least one desired non-manual slot are counted.
+func derivePoolDesired(desiredState map[string]TemplateParams, cfg *config.City) map[string]int {
+	if cfg == nil {
+		return nil
+	}
+	counts := make(map[string]int)
+	for _, tp := range desiredState {
+		cfgAgent := findAgentByTemplate(cfg, tp.TemplateName)
+		if cfgAgent != nil && cfgAgent.Pool != nil && !tp.ManualSession {
+			counts[tp.TemplateName]++
+		}
+	}
+	return counts
 }
