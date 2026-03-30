@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,6 +15,15 @@ import (
 	"github.com/gastownhall/gascity/internal/sessionlog"
 	"github.com/gastownhall/gascity/internal/telemetry"
 )
+
+func metaKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 var (
 	// ErrNotSession reports that the requested bead is not a session bead.
@@ -93,6 +104,8 @@ func (m *Manager) loadSessionBead(id string, allowClosed bool) (beads.Bead, stri
 		return beads.Bead{}, "", fmt.Errorf("getting session: %w", err)
 	}
 	if b.Type != BeadType {
+		log.Printf("DEBUG loadSessionBead: id=%s type=%q status=%q title=%q metadata_keys=%v store_type=%T",
+			id, b.Type, b.Status, b.Title, metaKeys(b.Metadata), m.store)
 		return beads.Bead{}, "", fmt.Errorf("%w: bead %s (type=%q)", ErrNotSession, id, b.Type)
 	}
 	if !allowClosed && b.Status == "closed" {

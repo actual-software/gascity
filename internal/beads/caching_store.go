@@ -271,12 +271,18 @@ func (c *CachingStore) Get(id string) (Bead, error) {
 	if c.state == cacheLive {
 		if b, ok := c.beads[id]; ok {
 			c.mu.RUnlock()
+			if b.Type == "" {
+				log.Printf("DEBUG CachingStore.Get: id=%s type=%q (EMPTY!) status=%q title=%q from=cache",
+					id, b.Type, b.Status, b.Title)
+			}
 			return cloneBead(b), nil
 		}
 		c.mu.RUnlock()
+		log.Printf("DEBUG CachingStore.Get: id=%s NOT IN CACHE (state=live, total=%d)", id, len(c.beads))
 		return Bead{}, fmt.Errorf("getting bead %q: %w", id, ErrNotFound)
 	}
 	c.mu.RUnlock()
+	log.Printf("DEBUG CachingStore.Get: id=%s falling through to backing (state=%d)", id, c.state)
 	return c.backing.Get(id)
 }
 
@@ -485,6 +491,7 @@ func (c *CachingStore) Create(b Bead) (Bead, error) {
 	if err != nil {
 		return created, err
 	}
+	log.Printf("DEBUG CachingStore.Create: id=%s type=%q backing_type=%q", created.ID, created.Type, b.Type)
 	c.mu.Lock()
 	c.beads[created.ID] = cloneBead(created)
 	c.mu.Unlock()
