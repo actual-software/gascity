@@ -190,6 +190,11 @@ func LoadWithIncludes(fs fsys.FS, path string, extraIncludes ...string) (*City, 
 	// Load namepool files for pool agents.
 	loadNamepools(fs, root, cityRoot)
 
+	// Backwards compat: promote deprecated graph_workflows → formula_v2.
+	if root.Daemon.GraphWorkflows && !root.Daemon.FormulaV2 {
+		root.Daemon.FormulaV2 = true
+	}
+
 	return root, prov, nil
 }
 
