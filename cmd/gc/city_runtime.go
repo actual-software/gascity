@@ -37,7 +37,7 @@ type CityRuntime struct {
 	sp                      runtime.Provider
 	publication             supervisor.PublicationConfig
 	buildFn                 func(*config.City, runtime.Provider, beads.Store) DesiredStateResult
-	buildFnWithSessionBeads func(*config.City, runtime.Provider, beads.Store, *sessionBeadSnapshot) DesiredStateResult
+	buildFnWithSessionBeads func(*config.City, runtime.Provider, beads.Store, map[string]beads.Store, *sessionBeadSnapshot) DesiredStateResult
 
 	dops drainOps
 	ct   crashTracker
@@ -85,7 +85,7 @@ type CityRuntimeParams struct {
 	SP                      runtime.Provider
 	Publication             supervisor.PublicationConfig
 	BuildFn                 func(*config.City, runtime.Provider, beads.Store) DesiredStateResult
-	BuildFnWithSessionBeads func(*config.City, runtime.Provider, beads.Store, *sessionBeadSnapshot) DesiredStateResult
+	BuildFnWithSessionBeads func(*config.City, runtime.Provider, beads.Store, map[string]beads.Store, *sessionBeadSnapshot) DesiredStateResult
 	Dops                    drainOps
 
 	Rec events.Recorder
@@ -693,6 +693,7 @@ func (cr *CityRuntime) controlDispatcherTick(ctx context.Context) {
 		filteredCfg,
 		cr.sp,
 		store,
+		nil,
 		sessionBeads,
 		cr.stderr,
 	)
@@ -784,8 +785,12 @@ func filterSessionBeadsByName(snapshot *sessionBeadSnapshot, names map[string]bo
 
 func (cr *CityRuntime) buildDesiredState(sessionBeads *sessionBeadSnapshot) DesiredStateResult {
 	store := cr.cityBeadStore()
+	var rigStores map[string]beads.Store
+	if cr.cs != nil {
+		rigStores = cr.cs.BeadStores()
+	}
 	if cr.buildFnWithSessionBeads != nil {
-		return cr.buildFnWithSessionBeads(cr.cfg, cr.sp, store, sessionBeads)
+		return cr.buildFnWithSessionBeads(cr.cfg, cr.sp, store, rigStores, sessionBeads)
 	}
 	return cr.buildFn(cr.cfg, cr.sp, store)
 }

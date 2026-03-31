@@ -108,7 +108,7 @@ func buildDesiredState(
 			fmt.Fprintf(stderr, "buildDesiredState: listing session beads: %v\n", err) //nolint:errcheck
 		}
 	}
-	return buildDesiredStateWithSessionBeads(cityName, cityPath, beaconTime, cfg, sp, store, sessionBeads, stderr)
+	return buildDesiredStateWithSessionBeads(cityName, cityPath, beaconTime, cfg, sp, store, nil, sessionBeads, stderr)
 }
 
 func buildDesiredStateWithSessionBeads(
@@ -117,6 +117,7 @@ func buildDesiredStateWithSessionBeads(
 	cfg *config.City,
 	sp runtime.Provider,
 	store beads.Store,
+	rigStores map[string]beads.Store,
 	sessionBeads *sessionBeadSnapshot,
 	stderr io.Writer,
 ) DesiredStateResult {
@@ -186,7 +187,7 @@ func buildDesiredStateWithSessionBeads(
 	if store != nil {
 		// Cross-reference: for each non-closed session, query its scope's
 		// store for work beads assigned to that session (in-progress + open).
-		assignedWorkBeads := collectAssignedWorkBeads(cfg, cityPath, store, suspendedRigPaths)
+		assignedWorkBeads := collectAssignedWorkBeads(cfg, store, rigStores, suspendedRigPaths)
 		poolDesiredStates := ComputePoolDesiredStates(cfg, assignedWorkBeads, sessionBeads.Open(), scaleCheckCounts)
 		for _, poolState := range poolDesiredStates {
 			cfgAgent := findAgentByTemplate(cfg, poolState.Template)
@@ -312,17 +313,20 @@ func buildDesiredStateWithSessionBeads(
 // sessions have active work and must stay alive.
 func collectAssignedWorkBeads(
 	cfg *config.City,
-	cityPath string,
 	cityStore beads.Store,
+	rigStores map[string]beads.Store,
 	suspendedRigPaths map[string]bool,
 ) []beads.Bead {
-	// Gather stores: city + each non-suspended rig.
+	// Use CachingStore-wrapped stores. Creating raw bdStoreForCity per rig
+	// spawns bd subprocesses on every tick, saturating dolt.
 	stores := []beads.Store{cityStore}
 	for _, rig := range cfg.Rigs {
 		if suspendedRigPaths[filepath.Clean(rig.Path)] {
 			continue
 		}
-		stores = append(stores, bdStoreForCity(rig.Path, cityPath))
+		if s, ok := rigStores[rig.Name]; ok {
+			stores = append(stores, s)
+		}
 	}
 
 	var result []beads.Bead

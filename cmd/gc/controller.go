@@ -490,7 +490,7 @@ func runController(
 	cfg *config.City,
 	configRev string,
 	buildFn func(*config.City, runtime.Provider, beads.Store) DesiredStateResult,
-	buildFnWithSessionBeads func(*config.City, runtime.Provider, beads.Store, *sessionBeadSnapshot) DesiredStateResult,
+	buildFnWithSessionBeads func(*config.City, runtime.Provider, beads.Store, map[string]beads.Store, *sessionBeadSnapshot) DesiredStateResult,
 	sp runtime.Provider,
 	dops drainOps,
 	poolSessions map[string]time.Duration,
