@@ -252,7 +252,7 @@ func (p *Provider) Start(ctx context.Context, name string, cfg runtime.Config) e
 		close(sc.done)
 		lis.Close()                 //nolint:errcheck
 		os.Remove(p.sockPath(name)) //nolint:errcheck
-		os.Remove(p.sockNamePath(name))
+		_ = os.Remove(p.sockNamePath(name))
 	}()
 
 	// Perform ACP handshake with a deadline. hsCtx (created above with
@@ -684,7 +684,7 @@ func (p *Provider) startControlSocket(name string, cmd *exec.Cmd) (net.Listener,
 	sp := p.sockPath(name)
 	namePath := p.sockNamePath(name)
 	os.Remove(sp) //nolint:errcheck
-	os.Remove(namePath)
+	_ = os.Remove(namePath)
 	if err := os.WriteFile(namePath, []byte(name), 0o644); err != nil {
 		return nil, err
 	}
@@ -791,7 +791,7 @@ func (p *Provider) stopBySocket(name string) error {
 	err := p.sendSocketCommand(name, "stop", 7*time.Second)
 	if err != nil {
 		os.Remove(p.sockPath(name)) //nolint:errcheck
-		os.Remove(p.sockNamePath(name))
+		_ = os.Remove(p.sockNamePath(name))
 		return nil
 	}
 	return nil

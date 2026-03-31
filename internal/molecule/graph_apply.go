@@ -301,7 +301,7 @@ func buildFragmentApplyPlan(store beads.Store, recipe *formula.FragmentRecipe, o
 	return plan, nil
 }
 
-func recipeStepToGraphNode(step formula.RecipeStep, vars map[string]string, priorityOverride *int) (beads.GraphApplyNode, error) {
+func recipeStepToGraphNode(step formula.RecipeStep, vars map[string]string, priorityOverride *int) (beads.GraphApplyNode, error) { //nolint:unparam // error return reserved for future validation
 	b := stepToBead(step, vars, priorityOverride)
 	return beads.GraphApplyNode{
 		Key:         step.ID,

@@ -119,7 +119,7 @@ func reconcileSessionBeads(
 	sp runtime.Provider,
 	store beads.Store,
 	dops drainOps,
-	workSet map[string]bool,
+	workSet map[string]bool, //nolint:unparam // workSet will be populated when work_query integration lands
 	readyWaitSet map[string]bool,
 	dt *drainTracker,
 	poolDesired map[string]int,
@@ -710,23 +710,4 @@ func resolveResumeCommand(command, sessionKey string, rp *config.ResolvedProvide
 	default: // "flag"
 		return command + " " + rp.ResumeFlag + " " + sessionKey
 	}
-}
-
-// derivePoolDesired computes pool desired counts from the desired state map.
-// Only pool agents with at least one desired non-manual slot are counted.
-func derivePoolDesired(desiredState map[string]TemplateParams, cfg *config.City) map[string]int {
-	if cfg == nil {
-		return nil
-	}
-	counts := make(map[string]int)
-	for _, tp := range desiredState {
-		if tp.ConfiguredNamedIdentity != "" {
-			continue // named sessions are not pool-managed
-		}
-		cfgAgent := findAgentByTemplate(cfg, tp.TemplateName)
-		if cfgAgent != nil && isMultiSessionCfgAgent(cfgAgent) && !tp.ManualSession {
-			counts[tp.TemplateName]++
-		}
-	}
-	return counts
 }

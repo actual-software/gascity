@@ -83,7 +83,7 @@ func computeSuspendedNames(cfg *config.City, cityName, cityPath string) map[stri
 // multi-instance pool agent in the config, mapped to the pool's drain
 // timeout. Used to distinguish excess pool members (drain) from true orphans
 // (kill) during reconciliation, and to enforce drain timeouts.
-func computePoolSessions(cfg *config.City, cityName, cityPath string, sp runtime.Provider) map[string]time.Duration {
+func computePoolSessions(cfg *config.City, cityName, _ string, sp runtime.Provider) map[string]time.Duration {
 	ps := make(map[string]time.Duration)
 	st := cfg.Workspace.SessionTemplate
 	for _, a := range cfg.Agents {
@@ -147,7 +147,7 @@ var dryRunMode bool
 // buildIdleTracker creates an idleTracker from the config, populating
 // timeouts for agents that have idle_timeout set. Returns nil if no
 // agents use idle timeout (disabled).
-func buildIdleTracker(cfg *config.City, cityName, cityPath string, sp runtime.Provider) idleTracker {
+func buildIdleTracker(cfg *config.City, cityName, _ string, sp runtime.Provider) idleTracker {
 	var hasAny bool
 	st := cfg.Workspace.SessionTemplate
 	for _, a := range cfg.Agents {

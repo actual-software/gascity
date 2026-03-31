@@ -177,10 +177,10 @@ func runAdoptionBarrier(
 		if slot := parsePoolSlot(sessionName); slot > 0 && isConfigAgent && isMultiSessionCfgAgent(cfgAgent) {
 			detail.PoolSlot = slot
 			meta["pool_slot"] = strconv.Itoa(slot)
-			if max := cfgAgent.EffectiveMaxActiveSessions(); max != nil && *max >= 0 && slot > *max {
+			if maxSess := cfgAgent.EffectiveMaxActiveSessions(); maxSess != nil && *maxSess >= 0 && slot > *maxSess {
 				detail.OutOfBounds = true
 				fmt.Fprintf(stderr, "adoption barrier: %s pool slot %d exceeds max %d (adopt-then-drain)\n", //nolint:errcheck
-					sessionName, slot, *max)
+					sessionName, slot, *maxSess)
 			}
 		}
 

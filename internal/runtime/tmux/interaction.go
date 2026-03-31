@@ -196,6 +196,7 @@ func (t *Tmux) Pending(name string) (*runtime.PendingInteraction, error) {
 	if !dedup.isNew(name, approval) {
 		// Return the interaction (caller may need it for display) but it's
 		// not a new detection. The stable RequestID makes this idempotent.
+		_ = struct{}{} // satisfy empty-block linter; dedup check is intentionally a no-op
 	}
 
 	requestID := "tmux-" + approvalHash(approval)

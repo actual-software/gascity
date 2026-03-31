@@ -206,8 +206,8 @@ func registerCityWithSupervisor(cityPath string, stdout, stderr io.Writer, comma
 }
 
 func keepRegisteredCity(entry supervisor.CityEntry, stderr io.Writer, commandName, reason string) {
-	fmt.Fprintf(stderr, "%s: %s; keeping registration for '%s' so the supervisor can retry automatically\n",
-		commandName, reason, entry.EffectiveName()) //nolint:errcheck // best-effort stderr
+	fmt.Fprintf(stderr, "%s: %s; keeping registration for '%s' so the supervisor can retry automatically\n", //nolint:errcheck // best-effort stderr
+		commandName, reason, entry.EffectiveName())
 }
 
 func waitForSupervisorCity(cityPath string, wantRunning bool, timeout time.Duration, stdout io.Writer) error {

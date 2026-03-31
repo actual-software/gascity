@@ -1438,6 +1438,9 @@ func (a *Agent) EffectiveOnBoot() string {
 // agentKey identifies an agent by its rig directory and name.
 type agentKey struct{ dir, name string }
 
+// InjectImplicitAgents adds implicit agent entries for configured providers
+// that lack an explicit [[agent]] entry, enabling auto-materialization of
+// sling targets without requiring manual agent declarations.
 func InjectImplicitAgents(cfg *City) {
 	// Build set of existing agent keys (dir, name).
 	existing := make(map[agentKey]bool, len(cfg.Agents))

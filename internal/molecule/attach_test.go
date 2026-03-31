@@ -2,6 +2,7 @@ package molecule
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/beads"
@@ -523,7 +524,7 @@ func TestAttachEpochConflict(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected epoch conflict error, got nil")
 	}
-	if err != ErrEpochConflict {
+	if !errors.Is(err, ErrEpochConflict) {
 		t.Fatalf("expected ErrEpochConflict, got: %v", err)
 	}
 

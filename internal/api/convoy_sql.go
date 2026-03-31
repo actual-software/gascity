@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,7 +50,7 @@ func workflowSQLSnapshot(host string, port int, database, rootID string) ([]bead
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("sql open: %w", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck // best-effort cleanup
 	db.SetMaxOpenConns(1)
 	db.SetConnMaxLifetime(30 * time.Second)
 
@@ -67,7 +68,7 @@ func workflowSQLSnapshot(host string, port int, database, rootID string) ([]bead
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("beads query: %w", err)
 	}
-	defer beadRows.Close()
+	defer beadRows.Close() //nolint:errcheck // best-effort cleanup
 
 	var workflowBeads []beads.Bead
 	beadIndex := make(map[string]beads.Bead)
@@ -139,7 +140,7 @@ func workflowSQLSnapshot(host string, port int, database, rootID string) ([]bead
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("deps query: %w", err)
 	}
-	defer depRows.Close()
+	defer depRows.Close() //nolint:errcheck // best-effort cleanup
 
 	depMap := make(map[string][]beads.Dep)
 	for depRows.Next() {
@@ -166,7 +167,7 @@ func workflowSQLSnapshot(host string, port int, database, rootID string) ([]bead
 		// Non-fatal — labels are optional
 		return workflowBeads, beadIndex, depMap, nil
 	}
-	defer labelRows.Close()
+	defer labelRows.Close() //nolint:errcheck // best-effort cleanup
 
 	labelMap := make(map[string][]string)
 	for labelRows.Next() {
@@ -448,7 +449,7 @@ func workflowSQLFindRoot(host string, port int, database, workflowID string) (be
 	if err != nil {
 		return beads.Bead{}, false, err
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck // best-effort cleanup
 
 	row := db.QueryRow(`
 		SELECT
@@ -473,7 +474,7 @@ func workflowSQLGetBead(host string, port int, database, id string) (beads.Bead,
 	if err != nil {
 		return beads.Bead{}, false, err
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck // best-effort cleanup
 
 	row := db.QueryRow(`
 		SELECT
@@ -509,7 +510,7 @@ func workflowSQLScanBead(scan func(dest ...any) error) (beads.Bead, bool, error)
 		&description, &createdAt, &updatedAt,
 		&metadataJSON,
 	); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return beads.Bead{}, false, nil
 		}
 		return beads.Bead{}, false, err
@@ -548,7 +549,7 @@ func resolveDoltConnection(cityPath string) (int, string, error) {
 			return 0, "", fmt.Errorf("no dolt state: %w", err)
 		}
 		port := 0
-		fmt.Sscanf(strings.TrimSpace(string(portData)), "%d", &port)
+		_, _ = fmt.Sscanf(strings.TrimSpace(string(portData)), "%d", &port)
 		if port == 0 {
 			return 0, "", fmt.Errorf("invalid port in port file")
 		}

@@ -776,7 +776,7 @@ func TestRetryIdempotencyKeyPreventsDoubleSpawn(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // findAttemptByRef finds a bead with a matching gc.step_ref in the workflow.
-func findAttemptByRef(t *testing.T, store beads.Store, rootID, stepRef string) beads.Bead {
+func findAttemptByRef(t *testing.T, store beads.Store, _, stepRef string) beads.Bead {
 	t.Helper()
 	all, err := store.List()
 	if err != nil {

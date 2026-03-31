@@ -578,29 +578,6 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-func findScopeBody(all []beads.Bead, rootID, scopeRef string) (beads.Bead, bool) {
-	for _, bead := range all {
-		if bead.Metadata["gc.root_bead_id"] != rootID && bead.ID != rootID {
-			continue
-		}
-		if strings.TrimSpace(bead.Metadata["gc.scope_role"]) != "body" {
-			continue
-		}
-		if matchesScopeRef(bead, scopeRef) {
-			return bead, true
-		}
-	}
-	return beads.Bead{}, false
-}
-
-func matchesScopeRef(bead beads.Bead, scopeRef string) bool {
-	if strings.TrimSpace(bead.Metadata["gc.scope_ref"]) == scopeRef {
-		return true
-	}
-	stepRef := strings.TrimSpace(bead.Metadata["gc.step_ref"])
-	return stepRef == scopeRef || strings.HasSuffix(stepRef, "."+scopeRef)
-}
-
 func metadataInt(meta map[string]string, key string) int {
 	if meta == nil {
 		return 0

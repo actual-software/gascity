@@ -1400,8 +1400,8 @@ func TestEffectiveScaleCheckDefaultsQualified(t *testing.T) {
 
 func TestIsMultiSession(t *testing.T) {
 	a := Agent{Name: "worker", MinActiveSessions: ptrInt(0), MaxActiveSessions: ptrInt(5)}
-	max := a.EffectiveMaxActiveSessions()
-	if max == nil || *max == 1 {
+	maxSess := a.EffectiveMaxActiveSessions()
+	if maxSess == nil || *maxSess == 1 {
 		t.Error("agent with max=5 should be multi-session")
 	}
 
@@ -2780,8 +2780,8 @@ func TestEffectiveMethodsQualifyConsistently(t *testing.T) {
 			if tt.agent.Dir == "" {
 				t.Skip("test only applies to rig-scoped agents")
 			}
-			max := tt.agent.EffectiveMaxActiveSessions()
-			isMulti := max == nil || *max != 1
+			maxSess := tt.agent.EffectiveMaxActiveSessions()
+			isMulti := maxSess == nil || *maxSess != 1
 			if !isMulti {
 				t.Skip("fixed agents use env vars, not qualified names")
 			}

@@ -44,7 +44,7 @@ func streamProjectedEventsWithWatcher(
 	ctx context.Context,
 	w http.ResponseWriter,
 	watcher events.Watcher,
-	state State,
+	_ State,
 ) {
 	defer watcher.Close() //nolint:errcheck
 
@@ -95,7 +95,7 @@ func streamProjectedGlobalEvents(
 	w http.ResponseWriter,
 	mw *events.MuxWatcher,
 	cursors map[string]uint64,
-	resolver CityResolver,
+	_ CityResolver,
 ) {
 	defer mw.Close() //nolint:errcheck
 

@@ -66,7 +66,7 @@ func createPoolSessionBead(
 // instance "worker-1"). For non-pool agents, templateName == qualifiedName.
 //
 // Results are cached in p.beadNames for the duration of the build cycle.
-func (p *agentBuildParams) resolveSessionName(qualifiedName, templateName string) string {
+func (p *agentBuildParams) resolveSessionName(qualifiedName, _ string) string {
 	// Check cache first.
 	if sn, ok := p.beadNames[qualifiedName]; ok {
 		return sn

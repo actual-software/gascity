@@ -201,7 +201,7 @@ func (cs *controllerState) startBeadEventWatcher(ctx context.Context) {
 			for {
 				evt, err := watcher.Next()
 				if err != nil {
-					watcher.Close()
+					_ = watcher.Close()
 					break
 				}
 				seq = evt.Seq

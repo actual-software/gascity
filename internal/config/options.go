@@ -163,9 +163,7 @@ func CollectAllSchemaFlags(schema []ProviderOption) [][]string {
 	for _, opt := range schema {
 		for _, choice := range opt.Choices {
 			if len(choice.FlagArgs) > 0 {
-				for _, sub := range splitFlagArgs(choice.FlagArgs) {
-					flags = append(flags, sub)
-				}
+				flags = append(flags, splitFlagArgs(choice.FlagArgs)...)
 			}
 		}
 	}

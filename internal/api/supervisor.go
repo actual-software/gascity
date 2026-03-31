@@ -5,7 +5,7 @@ import (
 	"log"
 	"net"
 	"net/http"
-	_ "net/http/pprof"
+	_ "net/http/pprof" // registers /debug/pprof handlers on DefaultServeMux
 	"sort"
 	"strings"
 	"sync"

@@ -49,8 +49,8 @@ func ExecCommandRunnerWithEnv(env map[string]string) CommandRunner {
 			if err != nil {
 				msg = err.Error()
 			}
-			fmt.Fprintf(f, "%s status=%s dur=%s dir=%s cmd=%s args=%q err=%q\n",
-				time.Now().UTC().Format(time.RFC3339Nano), status, time.Since(start), dir, name, args, msg) //nolint:errcheck
+			fmt.Fprintf(f, "%s status=%s dur=%s dir=%s cmd=%s args=%q err=%q\n", //nolint:errcheck // best-effort trace log
+				time.Now().UTC().Format(time.RFC3339Nano), status, time.Since(start), dir, name, args, msg)
 		}
 		trace("start", nil)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

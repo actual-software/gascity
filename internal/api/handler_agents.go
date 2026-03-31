@@ -345,8 +345,8 @@ type expandedAgent struct {
 // For unlimited pools (max < 0), it discovers running instances via session
 // provider prefix matching — the same approach as discoverPoolInstances.
 func expandAgent(a config.Agent, cityName, sessTmpl string, sp sessionLister) []expandedAgent {
-	max := a.EffectiveMaxActiveSessions()
-	isMultiSession := max == nil || *max != 1
+	maxSess := a.EffectiveMaxActiveSessions()
+	isMultiSession := maxSess == nil || *maxSess != 1
 
 	if !isMultiSession {
 		return []expandedAgent{{
@@ -361,15 +361,15 @@ func expandAgent(a config.Agent, cityName, sessTmpl string, sp sessionLister) []
 	poolName := a.QualifiedName()
 
 	// Unlimited: discover running instances via session prefix.
-	isUnlimited := max == nil || *max < 0
+	isUnlimited := maxSess == nil || *maxSess < 0
 	if isUnlimited && sp != nil {
 		return discoverUnlimitedPool(a, poolName, cityName, sessTmpl, sp)
 	}
 
 	// Bounded: static enumeration.
 	poolMax := 1
-	if max != nil && *max > 1 {
-		poolMax = *max
+	if maxSess != nil && *maxSess > 1 {
+		poolMax = *maxSess
 	}
 
 	var result []expandedAgent
@@ -448,10 +448,10 @@ func findAgent(cfg *config.City, name string) (config.Agent, bool) {
 			return a, true
 		}
 		// Check multi-session instance members.
-		max := a.EffectiveMaxActiveSessions()
-		isMultiSession := max == nil || *max != 1
+		maxSess := a.EffectiveMaxActiveSessions()
+		isMultiSession := maxSess == nil || *maxSess != 1
 		if isMultiSession && a.Dir == dir {
-			isUnlimited := max == nil || *max < 0
+			isUnlimited := maxSess == nil || *maxSess < 0
 			if isUnlimited {
 				// Unlimited: match "{name}-{N}" where N >= 1.
 				prefix := a.Name + "-"
@@ -464,7 +464,7 @@ func findAgent(cfg *config.City, name string) (config.Agent, bool) {
 				continue
 			}
 			// Bounded: enumerate.
-			poolMax := *max
+			poolMax := *maxSess
 			if poolMax <= 0 {
 				poolMax = 1
 			}
@@ -655,10 +655,10 @@ func multiSessionSharesWorkDir(cityPath, cityName, target string, a config.Agent
 		return false
 	}
 
-	max := a.EffectiveMaxActiveSessions()
-	isUnlimited := max == nil || *max < 0
+	maxSess := a.EffectiveMaxActiveSessions()
+	isUnlimited := maxSess == nil || *maxSess < 0
 	if !isUnlimited {
-		for slot := 1; slot <= *max; slot++ {
+		for slot := 1; slot <= *maxSess; slot++ {
 			if workdirutil.ResolveWorkDirPath(cityPath, cityName, poolQualifiedNameForSlot(a, slot), a, rigs) == target {
 				return true
 			}
@@ -688,13 +688,13 @@ func poolQualifiedNameForSlot(a config.Agent, slot int) string {
 // isMultiSessionAgent reports whether the agent can have more than one
 // concurrent session. This is the replacement for the removed IsPool() method.
 func isMultiSessionAgent(a config.Agent) bool {
-	max := a.EffectiveMaxActiveSessions()
-	return max == nil || *max != 1
+	maxSess := a.EffectiveMaxActiveSessions()
+	return maxSess == nil || *maxSess != 1
 }
 
 func poolInstanceNameForAPI(base string, slot int, a config.Agent) string {
-	max := a.EffectiveMaxActiveSessions()
-	isMultiInstance := max != nil && (*max > 1 || *max < 0)
+	maxSess := a.EffectiveMaxActiveSessions()
+	isMultiInstance := maxSess != nil && (*maxSess > 1 || *maxSess < 0)
 	if !isMultiInstance {
 		return base
 	}

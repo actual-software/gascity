@@ -836,7 +836,7 @@ func mustClose(t *testing.T, store beads.Store, id string) {
 	}
 }
 
-func mustDep(t *testing.T, store beads.Store, from, to, depType string) {
+func mustDep(t *testing.T, store beads.Store, from, to, depType string) { //nolint:unparam // depType is "blocks" in current tests; kept parameterized for future dep types
 	t.Helper()
 	if err := store.DepAdd(from, to, depType); err != nil {
 		t.Fatalf("dep %s -> %s: %v", from, to, err)

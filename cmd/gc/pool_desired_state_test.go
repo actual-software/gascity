@@ -24,15 +24,15 @@ func sessionBead(id, status string) beads.Bead {
 	return beads.Bead{ID: id, Status: status, Type: "session"}
 }
 
-func poolAgent(name, dir string, max *int, min int) config.Agent {
+func poolAgent(name, dir string, maxSess *int, minSess int) config.Agent {
 	var minPtr *int
-	if min > 0 {
-		minPtr = &min
+	if minSess > 0 {
+		minPtr = &minSess
 	}
 	return config.Agent{
 		Name:              name,
 		Dir:               dir,
-		MaxActiveSessions: max,
+		MaxActiveSessions: maxSess,
 		MinActiveSessions: minPtr,
 	}
 }

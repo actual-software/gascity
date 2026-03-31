@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -672,7 +671,7 @@ func selectOrCreatePoolSessionBead(
 
 func selectOrCreateDependencyPoolSessionBead(
 	bp *agentBuildParams,
-	cfgAgent *config.Agent,
+	_ *config.Agent,
 	template string,
 ) (beads.Bead, error) {
 	for _, bead := range bp.sessionBeads.Open() {
@@ -696,54 +695,6 @@ func selectOrCreateDependencyPoolSessionBead(
 		}
 	}
 	return createPoolSessionBead(bp.beadStore, template, bp.sessionBeads)
-}
-
-func allocatePoolInstanceIdentity(bp *agentBuildParams, cfgAgent *config.Agent, template string) (string, int) {
-	if bp == nil || cfgAgent == nil {
-		return "", 0
-	}
-	sp := scaleParamsFor(cfgAgent)
-	if sp.Max == 1 {
-		return "", 0
-	}
-
-	occupied := make(map[int]bool)
-	if bp.sessionBeads != nil {
-		cfg := &config.City{Agents: bp.agents}
-		for _, bead := range bp.sessionBeads.Open() {
-			if bead.Status == "closed" {
-				continue
-			}
-			if normalizedSessionTemplate(bead, cfg) != template {
-				continue
-			}
-			if slot := poolSlotForBead(bead, template); slot > 0 {
-				occupied[slot] = true
-			}
-		}
-	}
-
-	slot := 1
-	for occupied[slot] {
-		slot++
-	}
-	name := poolInstanceName(cfgAgent.Name, slot, cfgAgent)
-	if cfgAgent.Dir != "" {
-		name = cfgAgent.Dir + "/" + name
-	}
-	return name, slot
-}
-
-func poolSlotForBead(bead beads.Bead, template string) int {
-	if raw := strings.TrimSpace(bead.Metadata["pool_slot"]); raw != "" {
-		if slot, err := strconv.Atoi(raw); err == nil && slot > 0 {
-			return slot
-		}
-	}
-	if agentName := sessionBeadAgentName(bead); agentName != "" {
-		return resolvePoolSlot(agentName, template)
-	}
-	return 0
 }
 
 func agentInSuspendedRig(
@@ -783,8 +734,8 @@ func isMultiSessionCfgAgent(a *config.Agent) bool {
 	if a == nil {
 		return false
 	}
-	max := a.EffectiveMaxActiveSessions()
-	return max == nil || *max != 1
+	maxSess := a.EffectiveMaxActiveSessions()
+	return maxSess == nil || *maxSess != 1
 }
 
 // poolInstanceName returns the name for pool slot N.

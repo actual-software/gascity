@@ -1,4 +1,4 @@
-// Package workflow implements workflow execution, fan-out, and lifecycle management.
+// Package dispatch implements workflow execution, fan-out, and lifecycle management.
 package dispatch
 
 import (

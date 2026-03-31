@@ -171,7 +171,7 @@ func (p *Provider) Start(_ context.Context, name string, cfg runtime.Config) err
 		// never sees a stale socket after Stop returns.
 		lis.Close()                 //nolint:errcheck
 		os.Remove(p.sockPath(name)) //nolint:errcheck
-		os.Remove(p.sockNamePath(name))
+		_ = os.Remove(p.sockNamePath(name))
 		close(done)
 	}()
 
@@ -408,7 +408,7 @@ func (p *Provider) startControlSocket(name string, cmd *exec.Cmd) (net.Listener,
 	namePath := p.sockNamePath(name)
 	// Remove stale socket from a previous crash.
 	os.Remove(sp) //nolint:errcheck
-	os.Remove(namePath)
+	_ = os.Remove(namePath)
 	if err := os.WriteFile(namePath, []byte(name), 0o644); err != nil {
 		return nil, err
 	}
@@ -511,7 +511,7 @@ func (p *Provider) stopBySocket(name string) error {
 		// Socket doesn't exist or can't connect — session is dead (idempotent).
 		// Clean up stale socket file if it exists.
 		os.Remove(p.sockPath(name)) //nolint:errcheck
-		os.Remove(p.sockNamePath(name))
+		_ = os.Remove(p.sockNamePath(name))
 		return nil
 	}
 	return nil

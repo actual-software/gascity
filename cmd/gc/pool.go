@@ -264,8 +264,8 @@ func deepCopyAgent(src *config.Agent, name, dir string) config.Agent {
 // Errors are logged but not fatal — the controller continues regardless.
 func runPoolOnBoot(cfg *config.City, cityPath string, runner ScaleCheckRunner, stderr io.Writer) {
 	for _, a := range cfg.Agents {
-		max := a.EffectiveMaxActiveSessions()
-		isMultiSession := max == nil || *max != 1
+		maxSess := a.EffectiveMaxActiveSessions()
+		isMultiSession := maxSess == nil || *maxSess != 1
 		if !isMultiSession || a.Implicit {
 			continue
 		}

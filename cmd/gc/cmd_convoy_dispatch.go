@@ -38,14 +38,19 @@ func newWorkflowCmd(stdout, stderr io.Writer) *cobra.Command {
 
 func newConvoyControlCmd(stdout, stderr io.Writer) *cobra.Command {
 	var serve bool
+	var follow string
 	cmd := &cobra.Command{
 		Use:   "control [bead-id]",
 		Short: "Execute control beads or run the control-dispatcher loop",
 		Long: `Process a single control bead, or run the control-dispatcher loop
-with --serve to continuously process ready control beads.`,
+with --serve to continuously process ready control beads.
+Use --follow <agent> to filter the serve loop to a specific agent template.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			if serve {
+			if serve || follow != "" {
+				if follow != "" {
+					args = append(args, follow)
+				}
 				return runConvoyControlServe(args, stdout, stderr)
 			}
 			if len(args) == 0 {
@@ -62,6 +67,7 @@ with --serve to continuously process ready control beads.`,
 		},
 	}
 	cmd.Flags().BoolVar(&serve, "serve", false, "Run the control-dispatcher loop (continuous)")
+	cmd.Flags().StringVar(&follow, "follow", "", "Run serve loop filtered to a specific agent template")
 	return cmd
 }
 
@@ -360,13 +366,13 @@ also remove them from the store via bd delete --force.`,
 func cmdWorkflowDelete(workflowID string, force, deleteBeads bool, stdout, stderr io.Writer) int {
 	cityPath, err := resolveCity()
 	if err != nil {
-		fmt.Fprintf(stderr, "gc workflow delete: %v\n", err)
+		fmt.Fprintf(stderr, "gc workflow delete: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
 	readDoltPort(cityPath)
 	cfg, err := loadCityConfig(cityPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "gc workflow delete: %v\n", err)
+		fmt.Fprintf(stderr, "gc workflow delete: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
 
@@ -406,7 +412,7 @@ func cmdWorkflowDelete(workflowID string, force, deleteBeads bool, stdout, stder
 		}
 	}
 	if total == 0 {
-		fmt.Fprintf(stderr, "gc workflow delete: no beads found for workflow %s\n", workflowID)
+		fmt.Fprintf(stderr, "gc workflow delete: no beads found for workflow %s\n", workflowID) //nolint:errcheck // best-effort stderr
 		return 1
 	}
 
@@ -414,13 +420,13 @@ func cmdWorkflowDelete(workflowID string, force, deleteBeads bool, stdout, stder
 	if deleteBeads {
 		action = "delete"
 	}
-	fmt.Fprintf(stdout, "Workflow %s: %d beads (%d open) — %s\n", workflowID, total, openCount, action)
+	fmt.Fprintf(stdout, "Workflow %s: %d beads (%d open) — %s\n", workflowID, total, openCount, action) //nolint:errcheck // best-effort stdout
 	for _, m := range matches {
-		fmt.Fprintf(stdout, "  %s: %d beads\n", m.label, len(m.beads))
+		fmt.Fprintf(stdout, "  %s: %d beads\n", m.label, len(m.beads)) //nolint:errcheck // best-effort stdout
 	}
 
 	if !force {
-		fmt.Fprintln(stdout, "\nDry run. Use --force to proceed.")
+		fmt.Fprintln(stdout, "\nDry run. Use --force to proceed.") //nolint:errcheck // best-effort stdout
 		return 0
 	}
 
@@ -431,7 +437,7 @@ func cmdWorkflowDelete(workflowID string, force, deleteBeads bool, stdout, stder
 		n, _ := m.store.CloseAll(ids, map[string]string{"gc.outcome": "skipped"})
 		closed += n
 	}
-	fmt.Fprintf(stdout, "Closed %d open beads\n", closed)
+	fmt.Fprintf(stdout, "Closed %d open beads\n", closed) //nolint:errcheck // best-effort stdout
 
 	if !deleteBeads {
 		return 0
@@ -448,12 +454,12 @@ func cmdWorkflowDelete(workflowID string, force, deleteBeads bool, stdout, stder
 		args := append([]string{"delete"}, ids...)
 		args = append(args, "--cascade", "--force")
 		if _, err := runner(m.rigPath, "bd", args...); err != nil {
-			fmt.Fprintf(stderr, "  batch delete: %v\n", err)
+			fmt.Fprintf(stderr, "  batch delete: %v\n", err) //nolint:errcheck // best-effort stderr
 			continue
 		}
 		deleted += len(ids)
 	}
-	fmt.Fprintf(stdout, "Deleted %d beads\n", deleted)
+	fmt.Fprintf(stdout, "Deleted %d beads\n", deleted) //nolint:errcheck // best-effort stdout
 	return 0
 }
 

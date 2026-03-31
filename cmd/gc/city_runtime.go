@@ -357,7 +357,7 @@ func (cr *CityRuntime) tick(
 	// the reconciler to read/write hashes during reconciliation.
 	sessionBeads := cr.loadSessionBeadSnapshot()
 	result := cr.buildDesiredState(sessionBeads)
-	sessionBeads = cr.syncBeadsAndUpdateIndex(result.State, sessionBeads)
+	_ = cr.syncBeadsAndUpdateIndex(result.State, sessionBeads)
 	// Reload snapshot after sync so the reconciler sees metadata written
 	// by syncBeadsAndUpdateIndex (e.g., configured_named_session/mode
 	// stamped on adopted beads). The CachingStore has the updated data

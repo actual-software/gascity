@@ -235,8 +235,8 @@ func applyNestedCaps(cfg *config.City, requests []SessionRequest) []PoolDesiredS
 			continue
 		}
 		template := agent.QualifiedName()
-		min := agent.EffectiveMinActiveSessions()
-		for agentCount[template] < min {
+		minSess := agent.EffectiveMinActiveSessions()
+		for agentCount[template] < minSess {
 			rig := agentRigMap[template]
 			// Check caps before adding idle session.
 			agentMax := agentMaxMap[template]

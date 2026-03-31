@@ -489,8 +489,8 @@ func resolveAttemptRouteBinding(target string, cfg *config.City) (attemptRouteBi
 
 	if agentCfg := config.FindAgent(cfg, target); agentCfg != nil {
 		binding := attemptRouteBinding{qualifiedName: agentCfg.QualifiedName()}
-		max := agentCfg.EffectiveMaxActiveSessions()
-		isMultiSession := max == nil || *max != 1
+		maxSess := agentCfg.EffectiveMaxActiveSessions()
+		isMultiSession := maxSess == nil || *maxSess != 1
 		if isMultiSession {
 			label := agentCfg.QualifiedName()
 			if agentCfg.PoolName != "" {

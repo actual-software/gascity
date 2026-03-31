@@ -736,7 +736,7 @@ type failListStore struct {
 	beads.Store
 }
 
-func (s failListStore) List(status ...string) ([]beads.Bead, error) {
+func (s failListStore) List(_ ...string) ([]beads.Bead, error) {
 	return nil, errors.New("list failed")
 }
 

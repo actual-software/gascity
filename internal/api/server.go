@@ -39,12 +39,6 @@ type Server struct {
 
 	// LookPathFunc can be overridden in tests. Defaults to exec.LookPath.
 	LookPathFunc func(string) (string, error)
-
-	// sessionFileCacheMu guards sessionFileCache.
-	sessionFileCacheMu sync.Mutex
-	// sessionFileCache maps (sessionKey or provider+workDir) → file path.
-	// Entries are permanent — session files don't move once created.
-	sessionFileCache map[string]string
 }
 
 type lookPathEntry struct {
@@ -96,26 +90,6 @@ func (s *Server) resolveTitleProvider() *config.ResolvedProvider {
 		return nil
 	}
 	return rp
-}
-
-// cachedSessionFile returns a cached session file path, or "" if not cached.
-func (s *Server) cachedSessionFile(key string) string {
-	s.sessionFileCacheMu.Lock()
-	defer s.sessionFileCacheMu.Unlock()
-	if s.sessionFileCache == nil {
-		return ""
-	}
-	return s.sessionFileCache[key]
-}
-
-// storeSessionFile caches a session file path for future lookups.
-func (s *Server) storeSessionFile(key, path string) {
-	s.sessionFileCacheMu.Lock()
-	defer s.sessionFileCacheMu.Unlock()
-	if s.sessionFileCache == nil {
-		s.sessionFileCache = make(map[string]string)
-	}
-	s.sessionFileCache[key] = path
 }
 
 // New creates a Server with all routes registered. Does not start listening.

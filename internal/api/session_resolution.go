@@ -283,8 +283,8 @@ func apiAllowImplicitTemplateMaterialization(cfg *config.City, identifier string
 	if !ok {
 		return true
 	}
-	max := agentCfg.EffectiveMaxActiveSessions()
-	return max != nil && *max == 1
+	maxSess := agentCfg.EffectiveMaxActiveSessions()
+	return maxSess != nil && *maxSess == 1
 }
 
 func (s *Server) materializeTemplateSession(store beads.Store, template string) (string, error) {
