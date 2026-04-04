@@ -416,41 +416,53 @@ func (c *CachingStore) Ready() ([]Bead, error) {
 }
 
 // Children returns all beads with the given parent ID.
-func (c *CachingStore) Children(parentID string) ([]Bead, error) {
-	c.mu.RLock()
-	if c.state == cacheLive {
-		var result []Bead
-		for _, b := range c.beads {
-			if b.ParentID == parentID {
-				result = append(result, cloneBead(b))
-			}
-		}
-		c.mu.RUnlock()
-		return result, nil
-	}
-	c.mu.RUnlock()
-	return c.backing.Children(parentID)
+// Children always delegates to the backing store because all callers need
+// closed children (molecule tree walks) and the cache never has them.
+func (c *CachingStore) Children(parentID string, opts ...QueryOpt) ([]Bead, error) {
+	return c.backing.Children(parentID, opts...)
 }
 
-// ListByLabel returns beads matching the given label.
-func (c *CachingStore) ListByLabel(label string, limit int) ([]Bead, error) {
+// ListByLabel returns beads matching the given label. By default, serves from
+// cache only (non-closed beads). Pass IncludeClosed to also query the backing
+// store for closed beads and merge results.
+func (c *CachingStore) ListByLabel(label string, limit int, opts ...QueryOpt) ([]Bead, error) {
 	c.mu.RLock()
 	if c.state == cacheLive || c.state == cachePartial {
-		var result []Bead
+		var cached []Bead
+		seen := make(map[string]bool)
 		for _, b := range c.beads {
 			for _, l := range b.Labels {
 				if l == label {
-					result = append(result, cloneBead(b))
-					if limit > 0 && len(result) >= limit {
-						c.mu.RUnlock()
-						return result, nil
-					}
+					cached = append(cached, cloneBead(b))
+					seen[b.ID] = true
 					break
 				}
 			}
 		}
 		c.mu.RUnlock()
-		return result, nil
+
+		if !HasOpt(opts, IncludeClosed) {
+			if limit > 0 && len(cached) > limit {
+				cached = cached[:limit]
+			}
+			return cached, nil
+		}
+
+		// IncludeClosed: merge with backing store for closed beads.
+		all, err := c.backing.ListByLabel(label, limit)
+		if err != nil {
+			return cached, nil
+		}
+		for _, b := range all {
+			if !seen[b.ID] {
+				cached = append(cached, b)
+				seen[b.ID] = true
+			}
+		}
+		if limit > 0 && len(cached) > limit {
+			cached = cached[:limit]
+		}
+		return cached, nil
 	}
 	c.mu.RUnlock()
 	return c.backing.ListByLabel(label, limit)
