@@ -1351,7 +1351,7 @@ func TestInterruptTargetsBounded_RespectsInterruptCap(t *testing.T) {
 	}
 }
 
-func TestInterruptTargetsBounded_SkipsPoolManagedSessions(t *testing.T) {
+func TestInterruptTargetsBounded_StopsPoolManagedSessions(t *testing.T) {
 	sp := runtime.NewFake()
 	// Start both sessions.
 	for _, name := range []string{"human-worker", "pool-worker"} {
@@ -1368,8 +1368,16 @@ func TestInterruptTargetsBounded_SkipsPoolManagedSessions(t *testing.T) {
 	if sent != 1 {
 		t.Fatalf("sent = %d, want 1 (only human-worker)", sent)
 	}
-	if !strings.Contains(stderr.String(), "skipped_pool_managed") {
-		t.Fatalf("stderr = %q, want skipped_pool_managed log entry", stderr.String())
+	if !strings.Contains(stderr.String(), "stopped_pool_managed") {
+		t.Fatalf("stderr = %q, want stopped_pool_managed log entry", stderr.String())
+	}
+	// Pool-managed session should have been stopped, not interrupted.
+	if sp.IsRunning("pool-worker") {
+		t.Fatal("pool-worker should have been stopped")
+	}
+	// Human worker should still be running (only interrupted, not stopped).
+	if !sp.IsRunning("human-worker") {
+		t.Fatal("human-worker should still be running (only interrupted)")
 	}
 }
 

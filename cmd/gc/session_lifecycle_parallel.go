@@ -945,13 +945,20 @@ func filterStopTargets(targets []stopTarget, names []string) []stopTarget {
 }
 
 func interruptTargetsBounded(targets []stopTarget, sp runtime.Provider, stderr io.Writer) int {
-	// Filter out pool-managed sessions: they have no human user, so
-	// Claude Code's interactive "What should Claude do instead?" prompt
-	// would hang them forever. Let the stop timeout handle cleanup.
+	// Pool-managed sessions have no human user, so Claude Code's
+	// interactive "What should Claude do instead?" prompt would hang
+	// them forever. Stop them immediately instead of interrupting —
+	// no metadata to go stale if shutdown is aborted.
 	interruptable := make([]stopTarget, 0, len(targets))
 	for _, t := range targets {
 		if t.poolManaged {
-			logLifecycleOutcome(stderr, "interrupt", 0, t.name, t.template, "skipped_pool_managed", time.Now(), time.Now(), nil)
+			started := time.Now()
+			err := sp.Stop(t.name)
+			outcome := "stopped_pool_managed"
+			if err != nil {
+				outcome = "stop_failed"
+			}
+			logLifecycleOutcome(stderr, "interrupt", 0, t.name, t.template, outcome, started, time.Now(), err)
 			continue
 		}
 		interruptable = append(interruptable, t)
