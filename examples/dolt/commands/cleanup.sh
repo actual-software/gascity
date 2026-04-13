@@ -37,8 +37,24 @@ if [ ! -d "$data_dir" ]; then
 fi
 
 # Collect referenced database names from metadata.json files.
+# Check city metadata, rigs/ subdirectory (legacy), and actual rig paths from city.toml.
 referenced=""
-for meta in "$GC_CITY_PATH"/.beads/metadata.json "$GC_CITY_PATH"/rigs/*/.beads/metadata.json; do
+rig_meta_paths="$GC_CITY_PATH/.beads/metadata.json"
+
+# Legacy: rigs/ subdirectory
+for meta in "$GC_CITY_PATH"/rigs/*/.beads/metadata.json; do
+  [ -f "$meta" ] && rig_meta_paths="$rig_meta_paths $meta"
+done
+
+# Actual rig paths from city.toml [[rigs]] entries
+if [ -f "$GC_CITY_PATH/city.toml" ]; then
+  rig_paths=$(grep '^path' "$GC_CITY_PATH/city.toml" 2>/dev/null | sed 's/.*=.*"\(.*\)"/\1/' || true)
+  for rp in $rig_paths; do
+    [ -f "$rp/.beads/metadata.json" ] && rig_meta_paths="$rig_meta_paths $rp/.beads/metadata.json"
+  done
+fi
+
+for meta in $rig_meta_paths; do
   [ -f "$meta" ] || continue
   db=$(grep -o '"dolt_database"[[:space:]]*:[[:space:]]*"[^"]*"' "$meta" 2>/dev/null | sed 's/.*"dolt_database"[[:space:]]*:[[:space:]]*"//;s/"//' || true)
   [ -n "$db" ] && referenced="$referenced $db "
