@@ -1425,8 +1425,14 @@ func (cr *CityRuntime) beadReconcileTick(ctx context.Context, result DesiredStat
 	dispatchSessionBeads, err := loadSessionBeadSnapshot(store)
 	if err != nil {
 		fmt.Fprintf(cr.stderr, "%s: dispatching wait nudges: %v\n", cr.logPrefix, err) //nolint:errcheck
-	} else if err := dispatchReadyWaitNudgesWithSnapshot(cr.cityPath, store, time.Now(), dispatchSessionBeads); err != nil {
-		fmt.Fprintf(cr.stderr, "%s: dispatching wait nudges: %v\n", cr.logPrefix, err) //nolint:errcheck
+	} else {
+		now := time.Now()
+		if err := dispatchReadyWaitNudgesWithSnapshot(cr.cityPath, store, now, dispatchSessionBeads); err != nil {
+			fmt.Fprintf(cr.stderr, "%s: dispatching wait nudges: %v\n", cr.logPrefix, err) //nolint:errcheck
+		}
+		if err := dispatchReadyRoutedNudges(cr.cityPath, cr.rigBeadStores(), dispatchSessionBeads, now); err != nil {
+			fmt.Fprintf(cr.stderr, "%s: dispatching routed-work nudges: %v\n", cr.logPrefix, err) //nolint:errcheck
+		}
 	}
 
 	// Idle recovery: detect pool sessions stuck at the prompt after
