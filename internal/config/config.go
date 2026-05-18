@@ -562,6 +562,10 @@ type AgentOverride struct {
 	// MaxSessionAgeJitter overrides the jitter added on top of MaxSessionAge.
 	// Duration string (e.g., "15m"). Empty disables jitter.
 	MaxSessionAgeJitter *string `toml:"max_session_age_jitter,omitempty"`
+	// Compaction overrides the agent's compaction config. When set, the
+	// override replaces the agent's compaction block in full (no field-by-field
+	// merge) — matching the way other struct-typed agent fields are patched.
+	Compaction *Compaction `toml:"compaction,omitempty"`
 	// SleepAfterIdle overrides idle sleep policy for this agent. Accepts a
 	// duration string (e.g., "30s") or "off".
 	SleepAfterIdle *string `toml:"sleep_after_idle,omitempty"`
@@ -2115,6 +2119,91 @@ const (
 	AgentLifecycleOneShot = "one_shot"
 )
 
+// Compaction holds operator-controlled context-window management for an
+// agent. Zero values mean disabled, preserving the historical behavior where
+// the provider's own auto-compaction is the sole context-management path.
+//
+// The intent is to give operators a declarative knob — set in pack.toml — for
+// preemptively cycling a long-lived named session before token costs balloon
+// or budget limits hit. The controller-side watcher counts turns (and
+// eventually tokens) and applies the configured policy when a threshold is
+// crossed. See cmd_compaction.go for the runtime path.
+type Compaction struct {
+	// ThresholdTurns is the per-session UserPromptSubmit count at which the
+	// configured policy fires. Zero or negative disables turn-based
+	// thresholding. One "turn" corresponds to one user prompt submission as
+	// observed by the provider's UserPromptSubmit hook; assistant-only
+	// activity (tool calls, intermediate model responses) does not advance
+	// the counter.
+	ThresholdTurns int `toml:"threshold_turns,omitempty"`
+	// ThresholdTokens is the cumulative token-count threshold (input plus
+	// output) at which the configured policy fires. Parsed and validated in
+	// v1 but not yet acted on, because per-turn token usage is not reliably
+	// observable across providers via hook stdin today. Once a provider
+	// exposes token usage in a stable shape, the watcher will start
+	// honoring this field. Zero disables.
+	ThresholdTokens int `toml:"threshold_tokens,omitempty"`
+	// Message is the operator-authored text rendered as the handoff mail
+	// body (Policy = "handoff") or the warning emitted to stderr (Policy =
+	// "warn"). Supports shell-style $VAR placeholders: $GC_AGENT,
+	// $GC_SESSION_ID, $GC_ALIAS, $BEAD_ID, $TURNS, $TOKENS. Unknown
+	// placeholders pass through unchanged so operators can include literal
+	// "$" characters.
+	Message string `toml:"message,omitempty"`
+	// Policy controls what the watcher does when a threshold trips:
+	//   "handoff" (default when ThresholdTurns > 0): call `gc handoff --auto`
+	//             with the rendered Message as the mail body, then reset the
+	//             counter. The controller restarts the session per the
+	//             standard handoff path.
+	//   "warn":   render the message to stderr (visible in the session's
+	//             scrollback / supervisor log) without cycling the session.
+	//             The counter resets so the warning re-fires each window.
+	//   "reset":  silently reset the counter without taking any action.
+	//             Intended for tests and dry-run rollouts.
+	// Empty string is equivalent to "handoff" when a threshold is set;
+	// validation rejects unknown values.
+	Policy string `toml:"policy,omitempty" jsonschema:"enum=handoff,enum=warn,enum=reset"`
+}
+
+// Enabled reports whether the agent has opted in to compaction-based
+// session cycling. False when every threshold is zero (the safe default).
+func (c Compaction) Enabled() bool {
+	return c.ThresholdTurns > 0 || c.ThresholdTokens > 0
+}
+
+// EffectivePolicy returns the policy that should fire on a tripped
+// threshold. When Policy is empty and the agent has opted in, the safe
+// default is "handoff" — matching the operator intent that motivated the
+// feature (cycle the session before costs balloon).
+func (c Compaction) EffectivePolicy() string {
+	if !c.Enabled() {
+		return ""
+	}
+	if c.Policy == "" {
+		return "handoff"
+	}
+	return c.Policy
+}
+
+// CompactionPolicies enumerates the valid Compaction.Policy values.
+// Exported for use in validation and operator-facing documentation.
+var CompactionPolicies = []string{"handoff", "warn", "reset"}
+
+// IsValidCompactionPolicy reports whether the provided policy is one of
+// the supported values. Empty is treated as valid (it's normalized to
+// "handoff" by EffectivePolicy when a threshold is set).
+func IsValidCompactionPolicy(policy string) bool {
+	if policy == "" {
+		return true
+	}
+	for _, p := range CompactionPolicies {
+		if p == policy {
+			return true
+		}
+	}
+	return false
+}
+
 // Agent defines a configured agent in the city.
 type Agent struct {
 	// Name is the unique identifier for this agent.
@@ -2263,6 +2352,18 @@ type Agent struct {
 	// disables jitter (every session restarts at exactly MaxSessionAge).
 	// Ignored when MaxSessionAge is unset.
 	MaxSessionAgeJitter string `toml:"max_session_age_jitter,omitempty"`
+	// Compaction declares operator-controlled context-window management for
+	// this agent. Defaults to all-zero (disabled): the provider's own
+	// auto-compaction remains the sole context-management path.
+	//
+	// When enabled (ThresholdTurns > 0), the controller observes per-turn
+	// activity (UserPromptSubmit hook firings) on the agent's sessions and,
+	// at threshold, applies Compaction.Policy with the rendered Message.
+	// Per-turn token counts are not yet reliably observable across providers
+	// in v1, so ThresholdTokens is parsed and persisted but not yet acted on
+	// — only ThresholdTurns triggers the policy today. (See compaction-tick
+	// implementation for the audit findings recorded at v1.)
+	Compaction Compaction `toml:"compaction,omitempty"`
 	// SleepAfterIdle overrides idle sleep policy for this agent. Accepts a
 	// duration string (e.g., "30s") or "off".
 	SleepAfterIdle string `toml:"sleep_after_idle,omitempty"`

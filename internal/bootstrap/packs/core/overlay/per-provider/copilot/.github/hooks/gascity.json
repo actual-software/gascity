@@ -25,6 +25,11 @@
         "type": "command",
         "bash": "export PATH=\"$HOME/go/bin:$HOME/.local/bin:$PATH\" && gc mail check --inject",
         "timeoutSec": 10
+      },
+      {
+        "type": "command",
+        "bash": "export PATH=\"$HOME/go/bin:$HOME/.local/bin:$PATH\" && gc compaction tick",
+        "timeoutSec": 10
       }
     ]
   }

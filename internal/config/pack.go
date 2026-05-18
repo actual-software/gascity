@@ -2507,6 +2507,9 @@ func applyAgentOverride(a *Agent, ov *AgentOverride) {
 	if ov.MaxSessionAgeJitter != nil {
 		a.MaxSessionAgeJitter = *ov.MaxSessionAgeJitter
 	}
+	if ov.Compaction != nil {
+		a.Compaction = *ov.Compaction
+	}
 	if ov.SleepAfterIdle != nil {
 		a.SleepAfterIdle = NormalizeSleepAfterIdle(*ov.SleepAfterIdle)
 		a.SleepAfterIdleSource = "rig_override"

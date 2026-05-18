@@ -263,3 +263,147 @@ func TestValidateAgentsPromptFlagWithFlagModeOK(t *testing.T) {
 		t.Errorf("should be valid: %v", err)
 	}
 }
+
+func TestValidateSemanticsCompactionUnknownPolicy(t *testing.T) {
+	cfg := &City{
+		Workspace: Workspace{Provider: "claude"},
+		Agents: []Agent{{
+			Name:       "mayor",
+			Provider:   "claude",
+			Compaction: Compaction{Policy: "explode", ThresholdTurns: 10},
+		}},
+	}
+	warnings := ValidateSemantics(cfg, "city.toml")
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "compaction.policy") {
+		t.Errorf("warning should mention compaction.policy: %s", warnings[0])
+	}
+	if !strings.Contains(warnings[0], "explode") {
+		t.Errorf("warning should echo bad policy value: %s", warnings[0])
+	}
+}
+
+func TestValidateSemanticsCompactionNegativeThresholdsWarn(t *testing.T) {
+	cfg := &City{
+		Workspace: Workspace{Provider: "claude"},
+		Agents: []Agent{{
+			Name:       "mayor",
+			Provider:   "claude",
+			Compaction: Compaction{ThresholdTurns: -1, ThresholdTokens: -5, Policy: "handoff"},
+		}},
+	}
+	warnings := ValidateSemantics(cfg, "city.toml")
+	// Expect two warnings: one for each negative threshold. The policy-set-
+	// but-no-threshold warning should not fire because Enabled() is computed
+	// from positive thresholds; both negatives evaluate as disabled, so the
+	// "policy set but no threshold" rule applies.
+	turnWarn, tokenWarn := false, false
+	for _, w := range warnings {
+		if strings.Contains(w, "threshold_turns must be >= 0") {
+			turnWarn = true
+		}
+		if strings.Contains(w, "threshold_tokens must be >= 0") {
+			tokenWarn = true
+		}
+	}
+	if !turnWarn {
+		t.Errorf("missing turns-negative warning; got: %v", warnings)
+	}
+	if !tokenWarn {
+		t.Errorf("missing tokens-negative warning; got: %v", warnings)
+	}
+}
+
+func TestValidateSemanticsCompactionTokensWithoutTurnsIsInert(t *testing.T) {
+	cfg := &City{
+		Workspace: Workspace{Provider: "claude"},
+		Agents: []Agent{{
+			Name:       "mayor",
+			Provider:   "claude",
+			Compaction: Compaction{ThresholdTokens: 100000},
+		}},
+	}
+	warnings := ValidateSemantics(cfg, "city.toml")
+	// One warning: tokens-without-turns is inert in v1. Plus the policy-
+	// without-threshold warning would NOT fire because policy is empty.
+	got := false
+	for _, w := range warnings {
+		if strings.Contains(w, "currently inert") {
+			got = true
+			break
+		}
+	}
+	if !got {
+		t.Errorf("expected inert-tokens warning; got: %v", warnings)
+	}
+}
+
+func TestValidateSemanticsCompactionPolicyWithoutThresholdWarns(t *testing.T) {
+	cfg := &City{
+		Workspace: Workspace{Provider: "claude"},
+		Agents: []Agent{{
+			Name:       "mayor",
+			Provider:   "claude",
+			Compaction: Compaction{Policy: "warn"}, // no thresholds set
+		}},
+	}
+	warnings := ValidateSemantics(cfg, "city.toml")
+	got := false
+	for _, w := range warnings {
+		if strings.Contains(w, "policy will not fire until threshold_turns is set") {
+			got = true
+			break
+		}
+	}
+	if !got {
+		t.Errorf("expected policy-without-threshold warning; got: %v", warnings)
+	}
+}
+
+func TestCompactionEnabled(t *testing.T) {
+	cases := []struct {
+		name string
+		c    Compaction
+		want bool
+	}{
+		{"empty disabled", Compaction{}, false},
+		{"zero policy only disabled", Compaction{Policy: "handoff"}, false},
+		{"turns positive enabled", Compaction{ThresholdTurns: 1}, true},
+		{"tokens positive enabled", Compaction{ThresholdTokens: 100}, true},
+	}
+	for _, tc := range cases {
+		if got := tc.c.Enabled(); got != tc.want {
+			t.Errorf("%s: Enabled() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestCompactionEffectivePolicy(t *testing.T) {
+	// Disabled -> empty.
+	if got := (Compaction{}).EffectivePolicy(); got != "" {
+		t.Errorf("disabled EffectivePolicy = %q, want empty", got)
+	}
+	// Enabled + empty policy -> "handoff" default.
+	c := Compaction{ThresholdTurns: 5}
+	if got := c.EffectivePolicy(); got != "handoff" {
+		t.Errorf("default policy = %q, want handoff", got)
+	}
+	// Explicit policy preserved.
+	c2 := Compaction{ThresholdTurns: 5, Policy: "warn"}
+	if got := c2.EffectivePolicy(); got != "warn" {
+		t.Errorf("explicit policy = %q, want warn", got)
+	}
+}
+
+func TestIsValidCompactionPolicy(t *testing.T) {
+	for _, p := range []string{"", "handoff", "warn", "reset"} {
+		if !IsValidCompactionPolicy(p) {
+			t.Errorf("%q should be valid", p)
+		}
+	}
+	if IsValidCompactionPolicy("explode") {
+		t.Error("'explode' should not be valid")
+	}
+}

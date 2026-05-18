@@ -71,6 +71,43 @@ func ValidateSemantics(cfg *City, source string) []string {
 		}
 	}
 
+	// Check per-agent compaction config.
+	for _, a := range cfg.Agents {
+		c := a.Compaction
+		if !IsValidCompactionPolicy(c.Policy) {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s: agent %q: compaction.policy must be one of %v, got %q",
+				source, a.QualifiedName(), CompactionPolicies, c.Policy))
+		}
+		if c.ThresholdTurns < 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s: agent %q: compaction.threshold_turns must be >= 0, got %d (treating as disabled)",
+				source, a.QualifiedName(), c.ThresholdTurns))
+		}
+		if c.ThresholdTokens < 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s: agent %q: compaction.threshold_tokens must be >= 0, got %d (treating as disabled)",
+				source, a.QualifiedName(), c.ThresholdTokens))
+		}
+		// Surface the v1 limitation: ThresholdTokens is parsed but not yet
+		// acted on. Operators who set it should know it has no effect until
+		// per-turn token observability ships.
+		if c.ThresholdTokens > 0 && c.ThresholdTurns <= 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s: agent %q: compaction.threshold_tokens is set but threshold_turns is not — v1 only acts on threshold_turns, so this configuration is currently inert; set threshold_turns to a conservative bound until token-based thresholds ship",
+				source, a.QualifiedName()))
+		}
+		// A configured policy with no threshold is operator confusion: the
+		// policy will never fire. Treat as a warning, not an error, so we
+		// don't break configs that pre-declare policy in anticipation of
+		// future thresholds.
+		if !c.Enabled() && c.Policy != "" {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s: agent %q: compaction.policy = %q is set but no threshold is configured — the policy will not fire until threshold_turns is set",
+				source, a.QualifiedName(), c.Policy))
+		}
+	}
+
 	// Custom provider names must not contain the reserved ":" character
 	// (used by the base = "builtin:..." / "provider:..." namespace prefixes).
 	for name := range cfg.Providers {

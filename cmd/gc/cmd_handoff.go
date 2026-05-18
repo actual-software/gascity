@@ -148,6 +148,8 @@ func cmdHandoff(args []string, target string, auto bool, hookFormat string, stdo
 	}
 	rec := openCityRecorderAt(current.cityPath, stderr)
 	if auto {
+		cfg, _ := loadCityConfig(current.cityPath, stderr)
+		args = applyAgentCompactionMessageToAutoArgs(store, cfg, current, args)
 		return doHandoffAuto(store, rec, current.display, args, hookFormat, stdout, stderr)
 	}
 
