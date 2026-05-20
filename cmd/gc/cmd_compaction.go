@@ -276,6 +276,8 @@ func applyCompactionHandoff(
 // left as-is so the operator can safely include literal "$" characters
 // without escaping. Empty input returns a small canned default so the
 // handoff mail body is never empty.
+//
+//nolint:unparam // tokens is reserved for future token-count-based compaction; Compaction.ThresholdTokens is parsed but not yet acted on, so callers pass 0 today.
 func renderCompactionMessage(template, agentDisplay, sessionName string, turns, tokens int) string {
 	if strings.TrimSpace(template) == "" {
 		// Operator did not configure a message. Use a self-documenting
@@ -343,4 +345,3 @@ func compactionEnv(agentDisplay, sessionName string, turns, tokens int) map[stri
 	}
 	return env
 }
-

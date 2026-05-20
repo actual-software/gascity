@@ -13,6 +13,8 @@ import (
 
 // seedTestSessionBead inserts a session bead with the metadata fields
 // resolveCompactionContext / resolveSessionID need to round-trip through.
+//
+//nolint:unparam // helper keeps the explicit sessionName at call sites for parity with resolveSessionID/resolveCompactionContext, even though every current caller passes "mayor".
 func seedTestSessionBead(t *testing.T, store beads.Store, sessionName, template string) beads.Bead {
 	t.Helper()
 	b, err := store.Create(beads.Bead{

@@ -863,6 +863,12 @@ func TestDeepCopyAgentCoversAllFields(t *testing.T) {
 		OptionDefaults:               map[string]string{"effort": "max"},
 		BindingName:                  "gastown",
 		PackName:                     "gastown",
+		Compaction: config.Compaction{
+			ThresholdTurns:  20,
+			ThresholdTokens: 100_000,
+			Message:         "Compaction crossing threshold; cycling session.",
+			Policy:          "handoff",
+		},
 	}
 
 	// Tombstone fields (deprecated in v0.15.1, removed in v0.16) are not

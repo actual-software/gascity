@@ -96,6 +96,7 @@ Agent defines a configured agent in the city.
 | `idle_timeout` | string |  |  | IdleTimeout is the maximum time an agent session can be inactive before the controller kills and restarts it. Duration string (e.g., "15m", "1h"). Empty (default) disables idle checking. |
 | `max_session_age` | string |  |  | MaxSessionAge is the maximum wall-clock lifetime of a single runtime session before the controller preemptively restarts it. Duration string (e.g., "5h"). Empty (default) disables preemptive restarts. The restart is idle-gated: sessions with a pending interaction or an in-progress assigned work bead are left alone until they settle.  Motivation: provider SDKs that cache credentials at session start (e.g., Claude Code via Bedrock) can wedge when the underlying token expires if the SDK doesn't re-chain providers. Cycling long-running sessions before the token-expiry window prevents that failure mode without requiring upstream provider fixes. |
 | `max_session_age_jitter` | string |  |  | MaxSessionAgeJitter bounds random jitter added to MaxSessionAge on a per-session basis so a fleet of identically-configured agents doesn't synchronize restarts. Duration string (e.g., "15m"). Empty or 0 disables jitter (every session restarts at exactly MaxSessionAge). Ignored when MaxSessionAge is unset. |
+| `compaction` | Compaction |  |  | Compaction declares operator-controlled context-window management for this agent. Defaults to all-zero (disabled): the provider's own auto-compaction remains the sole context-management path.  When enabled (ThresholdTurns &gt; 0), the controller observes per-turn activity (UserPromptSubmit hook firings) on the agent's sessions and, at threshold, applies Compaction.Policy with the rendered Message. Per-turn token counts are not yet reliably observable across providers in v1, so ThresholdTokens is parsed and persisted but not yet acted on — only ThresholdTurns triggers the policy today. (See compaction-tick implementation for the audit findings recorded at v1.) |
 | `sleep_after_idle` | string |  |  | SleepAfterIdle overrides idle sleep policy for this agent. Accepts a duration string (e.g., "30s") or "off". |
 | `install_agent_hooks` | []string |  |  | InstallAgentHooks overrides workspace-level install_agent_hooks for this agent. When set, replaces (not adds to) the workspace default. |
 | `skills` | []string |  |  | Skills is a tombstone field retained for v0.15.1 backwards compatibility. Accepted during parse for migration visibility, but attachment-list fields are accepted but ignored by the active materializer. |
@@ -154,6 +155,7 @@ AgentOverride modifies a pack-stamped agent for a specific rig.
 | `idle_timeout` | string |  |  | IdleTimeout overrides the idle timeout duration string (e.g., "30s", "5m", "1h"). |
 | `max_session_age` | string |  |  | MaxSessionAge overrides the max session age. Duration string (e.g., "5h"). Empty disables preemptive restart. |
 | `max_session_age_jitter` | string |  |  | MaxSessionAgeJitter overrides the jitter added on top of MaxSessionAge. Duration string (e.g., "15m"). Empty disables jitter. |
+| `compaction` | Compaction |  |  | Compaction overrides the agent's compaction config. When set, the override replaces the agent's compaction block in full (no field-by-field merge) — matching the way other struct-typed agent fields are patched. |
 | `sleep_after_idle` | string |  |  | SleepAfterIdle overrides idle sleep policy for this agent. Accepts a duration string (e.g., "30s") or "off". |
 | `install_agent_hooks` | []string |  |  | InstallAgentHooks overrides the agent's install_agent_hooks list. |
 | `skills` | []string |  |  | Skills is a tombstone field retained for v0.15.1 backwards compatibility. Parsed for migration visibility, but attachment-list fields are accepted but ignored by the active materializer. |
@@ -207,6 +209,7 @@ AgentPatch modifies an existing agent identified by (Dir, Name).
 | `idle_timeout` | string |  |  | IdleTimeout overrides the idle timeout. Duration string (e.g., "30s", "5m", "1h"). |
 | `max_session_age` | string |  |  | MaxSessionAge overrides the max session age. Duration string (e.g., "5h"). |
 | `max_session_age_jitter` | string |  |  | MaxSessionAgeJitter overrides the max session age jitter. Duration string (e.g., "15m"). |
+| `compaction` | Compaction |  |  | Compaction overrides the agent's compaction config. When set, the override replaces the agent's compaction block in full (no field-by-field merge) — matching how other struct-typed agent fields are patched. |
 | `sleep_after_idle` | string |  |  | SleepAfterIdle overrides idle sleep policy for this agent. Accepts a duration string or "off". |
 | `install_agent_hooks` | []string |  |  | InstallAgentHooks overrides the agent's install_agent_hooks list. |
 | `skills` | []string |  |  | Skills is a tombstone field retained for v0.15.1 backwards compatibility.  Deprecated: removed in v0.16. Tombstone — accepted but ignored. See engdocs/proposals/skill-materialization.md |
@@ -251,6 +254,17 @@ ChatSessionsConfig configures chat session behavior.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `idle_timeout` | string |  |  | IdleTimeout is the duration after which a detached chat session is auto-suspended. Duration string (e.g., "30m", "1h"). 0 = disabled. |
+
+## Compaction
+
+Compaction holds operator-controlled context-window management for an agent.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `threshold_turns` | integer |  |  | ThresholdTurns is the per-session UserPromptSubmit count at which the configured policy fires. Zero or negative disables turn-based thresholding. One "turn" corresponds to one user prompt submission as observed by the provider's UserPromptSubmit hook; assistant-only activity (tool calls, intermediate model responses) does not advance the counter. |
+| `threshold_tokens` | integer |  |  | ThresholdTokens is the cumulative token-count threshold (input plus output) at which the configured policy fires. Parsed and validated in v1 but not yet acted on, because per-turn token usage is not reliably observable across providers via hook stdin today. Once a provider exposes token usage in a stable shape, the watcher will start honoring this field. Zero disables. |
+| `message` | string |  |  | Message is the operator-authored text rendered as the handoff mail body (Policy = "handoff") or the warning emitted to stderr (Policy = "warn"). Supports shell-style $VAR placeholders: $GC_AGENT, $GC_SESSION_ID, $GC_ALIAS, $BEAD_ID, $TURNS, $TOKENS. Unknown placeholders pass through unchanged so operators can include literal "$" characters. |
+| `policy` | string |  |  | Policy controls what the watcher does when a threshold trips:   "handoff" (default when ThresholdTurns &gt; 0): call `gc handoff --auto`             with the rendered Message as the mail body, then reset the             counter. The controller restarts the session per the             standard handoff path.   "warn":   render the message to stderr (visible in the session's             scrollback / supervisor log) without cycling the session.             The counter resets so the warning re-fires each window.   "reset":  silently reset the counter without taking any action.             Intended for tests and dry-run rollouts. Empty string is equivalent to "handoff" when a threshold is set; validation rejects unknown values. Enum: `handoff`, `warn`, `reset` |
 
 ## ConvergenceConfig
 

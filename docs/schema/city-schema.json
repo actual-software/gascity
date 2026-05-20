@@ -215,6 +215,10 @@
           "type": "string",
           "description": "MaxSessionAgeJitter bounds random jitter added to MaxSessionAge on a\nper-session basis so a fleet of identically-configured agents doesn't\nsynchronize restarts. Duration string (e.g., \"15m\"). Empty or 0\ndisables jitter (every session restarts at exactly MaxSessionAge).\nIgnored when MaxSessionAge is unset."
         },
+        "compaction": {
+          "$ref": "#/$defs/Compaction",
+          "description": "Compaction declares operator-controlled context-window management for\nthis agent. Defaults to all-zero (disabled): the provider's own\nauto-compaction remains the sole context-management path.\n\nWhen enabled (ThresholdTurns \u003e 0), the controller observes per-turn\nactivity (UserPromptSubmit hook firings) on the agent's sessions and,\nat threshold, applies Compaction.Policy with the rendered Message.\nPer-turn token counts are not yet reliably observable across providers\nin v1, so ThresholdTokens is parsed and persisted but not yet acted on\n— only ThresholdTurns triggers the policy today. (See compaction-tick\nimplementation for the audit findings recorded at v1.)"
+        },
         "sleep_after_idle": {
           "type": "string",
           "description": "SleepAfterIdle overrides idle sleep policy for this agent. Accepts a\nduration string (e.g., \"30s\") or \"off\"."
@@ -466,6 +470,10 @@
         "max_session_age_jitter": {
           "type": "string",
           "description": "MaxSessionAgeJitter overrides the jitter added on top of MaxSessionAge.\nDuration string (e.g., \"15m\"). Empty disables jitter."
+        },
+        "compaction": {
+          "$ref": "#/$defs/Compaction",
+          "description": "Compaction overrides the agent's compaction config. When set, the\noverride replaces the agent's compaction block in full (no field-by-field\nmerge) — matching the way other struct-typed agent fields are patched."
         },
         "sleep_after_idle": {
           "type": "string",
@@ -724,6 +732,10 @@
         "max_session_age_jitter": {
           "type": "string",
           "description": "MaxSessionAgeJitter overrides the max session age jitter. Duration string (e.g., \"15m\")."
+        },
+        "compaction": {
+          "$ref": "#/$defs/Compaction",
+          "description": "Compaction overrides the agent's compaction config. When set, the\noverride replaces the agent's compaction block in full (no field-by-field\nmerge) — matching how other struct-typed agent fields are patched."
         },
         "sleep_after_idle": {
           "type": "string",
@@ -1057,6 +1069,34 @@
         "workspace"
       ],
       "description": "City is the top-level configuration for a Gas City instance."
+    },
+    "Compaction": {
+      "properties": {
+        "threshold_turns": {
+          "type": "integer",
+          "description": "ThresholdTurns is the per-session UserPromptSubmit count at which the\nconfigured policy fires. Zero or negative disables turn-based\nthresholding. One \"turn\" corresponds to one user prompt submission as\nobserved by the provider's UserPromptSubmit hook; assistant-only\nactivity (tool calls, intermediate model responses) does not advance\nthe counter."
+        },
+        "threshold_tokens": {
+          "type": "integer",
+          "description": "ThresholdTokens is the cumulative token-count threshold (input plus\noutput) at which the configured policy fires. Parsed and validated in\nv1 but not yet acted on, because per-turn token usage is not reliably\nobservable across providers via hook stdin today. Once a provider\nexposes token usage in a stable shape, the watcher will start\nhonoring this field. Zero disables."
+        },
+        "message": {
+          "type": "string",
+          "description": "Message is the operator-authored text rendered as the handoff mail\nbody (Policy = \"handoff\") or the warning emitted to stderr (Policy =\n\"warn\"). Supports shell-style $VAR placeholders: $GC_AGENT,\n$GC_SESSION_ID, $GC_ALIAS, $BEAD_ID, $TURNS, $TOKENS. Unknown\nplaceholders pass through unchanged so operators can include literal\n\"$\" characters."
+        },
+        "policy": {
+          "type": "string",
+          "enum": [
+            "handoff",
+            "warn",
+            "reset"
+          ],
+          "description": "Policy controls what the watcher does when a threshold trips:\n  \"handoff\" (default when ThresholdTurns \u003e 0): call `gc handoff --auto`\n            with the rendered Message as the mail body, then reset the\n            counter. The controller restarts the session per the\n            standard handoff path.\n  \"warn\":   render the message to stderr (visible in the session's\n            scrollback / supervisor log) without cycling the session.\n            The counter resets so the warning re-fires each window.\n  \"reset\":  silently reset the counter without taking any action.\n            Intended for tests and dry-run rollouts.\nEmpty string is equivalent to \"handoff\" when a threshold is set;\nvalidation rejects unknown values."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Compaction holds operator-controlled context-window management for an agent."
     },
     "ConvergenceConfig": {
       "properties": {

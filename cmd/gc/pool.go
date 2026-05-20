@@ -359,6 +359,9 @@ func deepCopyAgent(src *config.Agent, name, dir string) config.Agent {
 			dst.OptionDefaults[k] = v
 		}
 	}
+	// Compaction holds only primitive fields (ints, strings) — direct
+	// struct assignment is a deep copy.
+	dst.Compaction = src.Compaction
 	return dst
 }
 

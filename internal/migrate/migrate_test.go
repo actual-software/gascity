@@ -710,6 +710,12 @@ func TestAgentConfigFromAgentCoversPersistedFields(t *testing.T) {
 		DependsOn:              []string{"other-agent"},
 		ResumeCommand:          "claude --resume {{.SessionKey}} --dangerously",
 		WakeMode:               "fresh",
+		Compaction: config.Compaction{
+			ThresholdTurns:  20,
+			ThresholdTokens: 100_000,
+			Message:         "Compaction crossing threshold; cycling session.",
+			Policy:          "handoff",
+		},
 	}
 
 	omitted := map[string]bool{

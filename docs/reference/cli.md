@@ -27,6 +27,7 @@ gc [flags]
 | [gc beads](#gc-beads) | Manage the beads provider |
 | [gc build-image](#gc-build-image) | Build a prebaked agent container image |
 | [gc cities](#gc-cities) | List registered cities |
+| [gc compaction](#gc-compaction) | Per-agent context-window management |
 | [gc completion](#gc-completion) | Generate the autocompletion script for the specified shell |
 | [gc config](#gc-config) | Inspect and validate city configuration |
 | [gc converge](#gc-converge) | Manage convergence loops (bounded iterative refinement) |
@@ -423,6 +424,64 @@ gc cities list [flags]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--json` | bool |  | Output one JSONL result record |
+
+## gc compaction
+
+Manage operator-controlled context-window thresholds.
+
+Today this exposes the "tick" hook command, intended to be wired into
+the provider's UserPromptSubmit hook so the controller can preemptively
+cycle a long-lived session before token costs balloon or budgets hit.
+See "gc compaction tick --help" for details.
+
+```
+gc compaction
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| [gc compaction tick](#gc-compaction-tick) | Increment the current session's turn counter and apply the configured compaction policy |
+
+## gc compaction tick
+
+Increment the current session's UserPromptSubmit counter.
+
+When the counter reaches the agent's [agent.compaction] threshold_turns,
+the configured policy fires:
+
+  policy = "handoff" (default when threshold_turns &gt; 0):
+    A self-mail is queued with the operator-authored message as its body,
+    and a controller restart is requested. The reconciler stops the
+    session on its next tick; the fresh session starts with the mail
+    queued so the rendered message becomes the first thing it sees
+    (delivered via the standard "gc mail check --inject" UserPromptSubmit
+    hook). Non-blocking: the tick returns immediately so the user's next
+    prompt is not delayed by waiting on the controller.
+
+  policy = "warn":
+    The rendered message is written to stderr (visible in the session's
+    scrollback / supervisor log). The counter resets so the warning
+    re-fires each window.
+
+  policy = "reset":
+    The counter resets silently. Intended for tests and dry-run rollouts.
+
+The tick is designed to be safe to call when no compaction is configured
+or when no session context is available: it exits 0 silently in those
+cases so wiring it into a global UserPromptSubmit hook never breaks the
+user prompt path.
+
+Message rendering: shell-style $VAR placeholders in the operator-authored
+message are expanded against the current environment ($GC_AGENT,
+$GC_SESSION_ID, $GC_ALIAS, $BEAD_ID) plus two synthesized values,
+$TURNS (the counter value at the moment the threshold tripped) and
+$TOKENS (currently always 0 in v1 — see the package-level investigation
+notes). Unknown placeholders pass through unchanged, so "$$5" and similar
+literal-dollar uses survive.
+
+```
+gc compaction tick
+```
 
 ## gc completion
 

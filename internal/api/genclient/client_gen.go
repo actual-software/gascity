@@ -331,6 +331,7 @@ type AgentOutputResponse struct {
 type AgentPatch struct {
 	AppendFragments         *[]string         `json:"AppendFragments"`
 	Attach                  *bool             `json:"Attach"`
+	Compaction              Compaction        `json:"Compaction"`
 	DefaultSlingFormula     *string           `json:"DefaultSlingFormula"`
 	DependsOn               *[]string         `json:"DependsOn"`
 	Dir                     string            `json:"Dir"`
@@ -685,6 +686,14 @@ type CityUnregisterSucceededPayload struct {
 
 	// RequestId Correlation ID from the 202 response.
 	RequestId string `json:"request_id"`
+}
+
+// Compaction defines model for Compaction.
+type Compaction struct {
+	Message         string `json:"Message"`
+	Policy          string `json:"Policy"`
+	ThresholdTokens int64  `json:"ThresholdTokens"`
+	ThresholdTurns  int64  `json:"ThresholdTurns"`
 }
 
 // ConfigAgentResponse defines model for ConfigAgentResponse.
