@@ -1995,6 +1995,7 @@ export interface components {
         AgentPatch: {
             AppendFragments: string[] | null;
             Attach: boolean | null;
+            Compaction: components["schemas"]["Compaction"];
             DefaultSlingFormula: string | null;
             DependsOn: string[] | null;
             Dir: string;
@@ -2300,6 +2301,14 @@ export interface components {
             path: string;
             /** @description Correlation ID from the 202 response. */
             request_id: string;
+        };
+        Compaction: {
+            Message: string;
+            Policy: string;
+            /** Format: int64 */
+            ThresholdTokens: number;
+            /** Format: int64 */
+            ThresholdTurns: number;
         };
         ConfigAgentResponse: {
             dir?: string;

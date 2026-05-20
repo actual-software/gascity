@@ -60,6 +60,7 @@ export type AgentOutputResponse = {
 export type AgentPatch = {
     AppendFragments: Array<string> | null;
     Attach: boolean | null;
+    Compaction: Compaction;
     DefaultSlingFormula: string | null;
     DependsOn: Array<string> | null;
     Dir: string;
@@ -466,6 +467,13 @@ export type CityUnregisterSucceededPayload = {
      * Correlation ID from the 202 response.
      */
     request_id: string;
+};
+
+export type Compaction = {
+    Message: string;
+    Policy: string;
+    ThresholdTokens: number;
+    ThresholdTurns: number;
 };
 
 export type ConfigAgentResponse = {
