@@ -32,6 +32,14 @@ immediate reconcile.`,
 }
 
 // cmdRestart stops the city, then re-starts it under the supervisor.
+//
+// On a clean return from doStartWithNameOverride, an extra post-condition
+// check verifies the controller is actually up. The start path can return
+// 0 (e.g. registered the city with the supervisor) while the supervisor
+// itself never came back online — leaving the city silently in the
+// "Controller: stopped" state with no operator-visible signal. The
+// post-condition surfaces the one-line recovery command so the operator
+// is not stranded.
 func cmdRestart(args []string, stdout, stderr io.Writer) int {
 	nameOverride, err := restartRegistrationName(args)
 	if err != nil {
@@ -41,7 +49,38 @@ func cmdRestart(args []string, stdout, stderr io.Writer) int {
 	if code := cmdStop(args, stdout, stderr, 0, false); code != 0 {
 		return code
 	}
-	return doStartWithNameOverride(args, false /*controllerMode*/, stdout, stderr, nameOverride)
+	startCode := doStartWithNameOverride(args, false /*controllerMode*/, stdout, stderr, nameOverride)
+	if startCode == 0 {
+		if cityPath, _ := resolveCommandCity(args); cityPath != "" {
+			verifyRestartControllerUp(cityPath, controllerStatusForCity, stderr)
+		}
+	}
+	return startCode
+}
+
+// controllerStatusLookup is the function signature `verifyRestartControllerUp`
+// uses to introspect the controller's state after a restart. The real
+// implementation is `controllerStatusForCity`; tests inject a fake.
+type controllerStatusLookup func(cityPath string) ControllerJSON
+
+// verifyRestartControllerUp checks whether the controller is actually
+// running after a `gc restart` returned success. When it is not, prints a
+// stderr hint with the recovery command. Returns true iff the controller
+// is running.
+func verifyRestartControllerUp(cityPath string, lookup controllerStatusLookup, stderr io.Writer) bool {
+	if cityPath == "" || lookup == nil {
+		return false
+	}
+	ctrl := lookup(cityPath)
+	if ctrl.Running {
+		return true
+	}
+	fmt.Fprintf( //nolint:errcheck // best-effort stderr
+		stderr,
+		"gc restart: controller is not running after restart. Run `gc start %s` to bring the supervisor back up.\n",
+		shellQuotePath(cityPath),
+	)
+	return false
 }
 
 func restartRegistrationName(args []string) (string, error) {

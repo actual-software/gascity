@@ -454,5 +454,16 @@ func controllerStatusGuidance(ctrl ControllerJSON, cityPath string) []string {
 		}
 		return append(lines, "Next: gc supervisor logs to inspect startup progress")
 	}
+	// Mode "" — controller fully stopped AND city not registered with the
+	// supervisor. `gc restart` can leave the city in this state if `gc stop`
+	// unregisters but the follow-up `gc start` fails to re-register, dropping
+	// the operator into "Controller: stopped" with no surfaced recovery path.
+	// Print one so they don't have to guess. Only do this when we have a
+	// cityPath to point the operator at; without one the hint would dangle.
+	if strings.TrimSpace(cityPath) != "" {
+		return []string{
+			"Next: " + startCommand + " to register this city and bring the controller back up",
+		}
+	}
 	return nil
 }

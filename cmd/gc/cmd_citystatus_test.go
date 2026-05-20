@@ -804,9 +804,15 @@ func TestControllerStatusGuidance(t *testing.T) {
 			},
 		},
 		{
-			name: "unmanaged stopped",
+			// The "Controller: stopped" case `gc restart` can drop the
+			// operator into: city unregistered, supervisor gone. We
+			// surface the recovery command rather than rendering this
+			// state silently.
+			name: "unmanaged stopped with city path",
 			ctrl: ControllerJSON{},
-			want: nil,
+			want: []string{
+				"Next: gc start /tmp/city to register this city and bring the controller back up",
+			},
 		},
 	}
 
@@ -823,4 +829,23 @@ func TestControllerStatusGuidance(t *testing.T) {
 			}
 		})
 	}
+
+	// Empty cityPath is the dangling-hint guard: with no path to point at,
+	// the stopped-mode case should still return nil rather than fabricate
+	// a "Next: gc start " line with a blank argument.
+	t.Run("unmanaged stopped without city path", func(t *testing.T) {
+		got := controllerStatusGuidance(ControllerJSON{}, "")
+		if got != nil {
+			t.Fatalf("controllerStatusGuidance(empty ctrl, empty path) = %#v, want nil", got)
+		}
+	})
+
+	// Whitespace cityPath should be treated the same as empty — we don't
+	// want "Next: gc start    " in operator-facing output.
+	t.Run("unmanaged stopped with whitespace city path", func(t *testing.T) {
+		got := controllerStatusGuidance(ControllerJSON{}, "   ")
+		if got != nil {
+			t.Fatalf("controllerStatusGuidance(empty ctrl, whitespace path) = %#v, want nil", got)
+		}
+	})
 }

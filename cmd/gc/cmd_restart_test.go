@@ -661,3 +661,71 @@ func TestDoRigRestartStopError(t *testing.T) {
 		t.Errorf("stdout = %q, want to contain 'Restarted 0 agent(s)'", got)
 	}
 }
+
+// TestVerifyRestartControllerUp exercises the post-condition guard
+// `cmdRestart` runs after a successful `doStartWithNameOverride`. The guard
+// catches the silent-failure case where start returns 0 but the supervisor
+// never came back online — the operator otherwise sees nothing and has to
+// run `gc status` to discover the city is still stopped.
+func TestVerifyRestartControllerUp(t *testing.T) {
+	tests := []struct {
+		name      string
+		cityPath  string
+		lookup    controllerStatusLookup
+		wantOK    bool
+		wantStder string // substring of stderr; empty means no output expected
+	}{
+		{
+			name:      "controller running, quiet success",
+			cityPath:  "/tmp/city",
+			lookup:    func(string) ControllerJSON { return ControllerJSON{Mode: "supervisor", PID: 1234, Running: true} },
+			wantOK:    true,
+			wantStder: "",
+		},
+		{
+			name:      "supervisor registered but not running, hint surfaced",
+			cityPath:  "/tmp/city",
+			lookup:    func(string) ControllerJSON { return ControllerJSON{Mode: "supervisor"} },
+			wantOK:    false,
+			wantStder: "Run `gc start /tmp/city`",
+		},
+		{
+			name:      "controller fully stopped, hint surfaced with city path",
+			cityPath:  "/tmp/city",
+			lookup:    func(string) ControllerJSON { return ControllerJSON{} },
+			wantOK:    false,
+			wantStder: "controller is not running after restart",
+		},
+		{
+			name:      "empty city path returns false silently",
+			cityPath:  "",
+			lookup:    func(string) ControllerJSON { return ControllerJSON{} },
+			wantOK:    false,
+			wantStder: "",
+		},
+		{
+			name:      "nil lookup returns false silently",
+			cityPath:  "/tmp/city",
+			lookup:    nil,
+			wantOK:    false,
+			wantStder: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			got := verifyRestartControllerUp(tt.cityPath, tt.lookup, &stderr)
+			if got != tt.wantOK {
+				t.Errorf("verifyRestartControllerUp = %v, want %v", got, tt.wantOK)
+			}
+			if tt.wantStder == "" {
+				if stderr.Len() > 0 {
+					t.Errorf("stderr = %q, want empty", stderr.String())
+				}
+			} else if !strings.Contains(stderr.String(), tt.wantStder) {
+				t.Errorf("stderr = %q, want to contain %q", stderr.String(), tt.wantStder)
+			}
+		})
+	}
+}
