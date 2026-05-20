@@ -779,7 +779,7 @@ func TestBuildResumeCommandUsesResolvedProviderCommand(t *testing.T) {
 		WorkDir:  "/tmp/workdir",
 	}
 
-	cmd, hints := buildResumeCommand(t.TempDir(), cfg, info, "", io.Discard)
+	cmd, hints := buildResumeCommand(t.TempDir(), cfg, info, "", nil, io.Discard)
 	if got, want := cmd, "aimux run gemini -- --approval-mode yolo"; got != want {
 		t.Fatalf("resume command = %q, want %q", got, want)
 	}
@@ -820,7 +820,7 @@ func TestBuildResumeCommandIncludesSettingsAndDefaultArgs(t *testing.T) {
 		ResumeFlag: "--resume",
 	}
 
-	cmd, _ := buildResumeCommand(cityDir, cfg, info, "", io.Discard)
+	cmd, _ := buildResumeCommand(cityDir, cfg, info, "", nil, io.Discard)
 
 	// Must include --settings pointing to .gc/settings.json.
 	wantSettings := fmt.Sprintf("--settings %q", filepath.Join(gcDir, "settings.json"))
@@ -829,6 +829,9 @@ func TestBuildResumeCommandIncludesSettingsAndDefaultArgs(t *testing.T) {
 	}
 	if !strings.Contains(cmd, wantSettings) {
 		t.Fatalf("resume command has wrong --settings path:\n  got:  %s\n  want: ...%s...", cmd, wantSettings)
+	}
+	if got := strings.Count(cmd, "--settings"); got != 1 {
+		t.Fatalf("resume command has %d --settings flags, want 1:\n  got: %s", got, cmd)
 	}
 
 	// Must include --resume flag.
@@ -861,11 +864,14 @@ func TestBuildResumeCommandUsesBuiltinAncestorForClaudeSettings(t *testing.T) {
 		WorkDir:  "/tmp/workdir",
 	}
 
-	cmd, _ := buildResumeCommand(cityDir, cfg, info, "", io.Discard)
+	cmd, _ := buildResumeCommand(cityDir, cfg, info, "", nil, io.Discard)
 
 	wantSettings := fmt.Sprintf("--settings %q", filepath.Join(cityDir, ".gc", "settings.json"))
 	if !strings.Contains(cmd, wantSettings) {
 		t.Fatalf("wrapped Claude resume command missing settings:\n  got:  %s\n  want: ...%s...", cmd, wantSettings)
+	}
+	if got := strings.Count(cmd, "--settings"); got != 1 {
+		t.Fatalf("wrapped Claude resume command has %d --settings flags, want 1:\n  got: %s", got, cmd)
 	}
 }
 
@@ -900,8 +906,126 @@ func TestBuildResumeCommandIncludesWrappedCodexResumeDefaults(t *testing.T) {
 		SessionKey: "abc-123",
 	}
 
-	cmd, _ := buildResumeCommand(cityDir, cfg, info, "", io.Discard)
+	cmd, _ := buildResumeCommand(cityDir, cfg, info, "", nil, io.Discard)
 	want := "aimux run codex -- --dangerously-bypass-approvals-and-sandbox -m gpt-5.3-codex-spark resume -c model_reasoning_effort=medium abc-123"
+	if cmd != want {
+		t.Fatalf("resume command = %q, want %q", cmd, want)
+	}
+}
+
+func TestBuildResumeCommandAppliesTemplateOverrides(t *testing.T) {
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{
+			{Name: "worker", Provider: "codex-provider"},
+		},
+		Providers: map[string]config.ProviderSpec{
+			"codex-provider": {
+				Command:    "codex",
+				ResumeFlag: "--resume",
+				OptionsSchema: []config.ProviderOption{
+					{
+						Key: "permission_mode",
+						Choices: []config.OptionChoice{
+							{Value: "default", FlagArgs: []string{"--ask-for-approval", "on-request"}},
+							{Value: "plan", FlagArgs: []string{"--ask-for-approval", "never"}},
+						},
+					},
+				},
+			},
+		},
+	}
+	info := session.Info{
+		Template:   "worker",
+		Command:    "codex --ask-for-approval on-request",
+		Provider:   "codex-provider",
+		WorkDir:    "/tmp/workdir",
+		SessionKey: "abc-123",
+	}
+
+	cmd, _ := buildResumeCommand(t.TempDir(), cfg, info, "", map[string]string{
+		"template_overrides": `{"permission_mode":"plan"}`,
+	}, io.Discard)
+	want := "codex --resume abc-123 --ask-for-approval never"
+	if cmd != want {
+		t.Fatalf("resume command = %q, want %q", cmd, want)
+	}
+}
+
+func TestBuildResumeCommandAppliesTemplateOverridesToExplicitResumeCommand(t *testing.T) {
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{
+			{Name: "worker", Provider: "codex-provider"},
+		},
+		Providers: map[string]config.ProviderSpec{
+			"codex-provider": {
+				Command:       "codex",
+				ResumeCommand: "codex resume {{.SessionKey}} --ask-for-approval on-request",
+				OptionsSchema: []config.ProviderOption{
+					{
+						Key: "permission_mode",
+						Choices: []config.OptionChoice{
+							{Value: "default", FlagArgs: []string{"--ask-for-approval", "on-request"}},
+							{Value: "plan", FlagArgs: []string{"--ask-for-approval", "never"}},
+						},
+					},
+				},
+			},
+		},
+	}
+	info := session.Info{
+		Template:   "worker",
+		Command:    "codex --ask-for-approval on-request",
+		Provider:   "codex-provider",
+		WorkDir:    "/tmp/workdir",
+		SessionKey: "abc-123",
+	}
+
+	cmd, _ := buildResumeCommand(t.TempDir(), cfg, info, "", map[string]string{
+		"template_overrides": `{"permission_mode":"plan"}`,
+	}, io.Discard)
+	want := "codex resume --ask-for-approval never abc-123"
+	if cmd != want {
+		t.Fatalf("resume command = %q, want %q", cmd, want)
+	}
+}
+
+func TestBuildResumeCommandFallsBackToDefaultArgsWhenOverridesInvalid(t *testing.T) {
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{
+			{Name: "worker", Provider: "codex-provider"},
+		},
+		Providers: map[string]config.ProviderSpec{
+			"codex-provider": {
+				Command:    "codex",
+				Args:       []string{"--ask-for-approval", "on-request"},
+				ResumeFlag: "--resume",
+				OptionsSchema: []config.ProviderOption{
+					{
+						Key: "permission_mode",
+						Choices: []config.OptionChoice{
+							{Value: "default", FlagArgs: []string{"--ask-for-approval", "on-request"}},
+							{Value: "plan", FlagArgs: []string{"--ask-for-approval", "never"}},
+						},
+					},
+				},
+			},
+		},
+	}
+	info := session.Info{
+		Template:   "worker",
+		Command:    "codex",
+		Provider:   "codex-provider",
+		WorkDir:    "/tmp/workdir",
+		SessionKey: "abc-123",
+	}
+
+	cmd, _ := buildResumeCommand(t.TempDir(), cfg, info, "", map[string]string{
+		"template_overrides": `{"permission_mode":"invalid"}`,
+	}, io.Discard)
+	want := "codex --resume abc-123 --ask-for-approval on-request"
 	if cmd != want {
 		t.Fatalf("resume command = %q, want %q", cmd, want)
 	}
@@ -933,8 +1057,75 @@ func TestBuildResumeCommandProviderKindSkipsTemplateCollision(t *testing.T) {
 		SessionKey: "abc-123",
 	}
 
-	cmd, _ := buildResumeCommand(t.TempDir(), cfg, info, "provider", io.Discard)
+	cmd, _ := buildResumeCommand(t.TempDir(), cfg, info, "provider", nil, io.Discard)
 	want := "true provider --resume abc-123"
+	if cmd != want {
+		t.Fatalf("resume command = %q, want %q", cmd, want)
+	}
+}
+
+func TestBuildResumeCommandManualProviderMetadataSkipsTemplateCollision(t *testing.T) {
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{
+			{Name: "runner", Provider: "agent-provider"},
+		},
+		Providers: map[string]config.ProviderSpec{
+			"runner": {
+				Command:    "true",
+				Args:       []string{"provider"},
+				ResumeFlag: "--resume",
+			},
+			"agent-provider": {
+				Command:    "true",
+				Args:       []string{"agent"},
+				ResumeFlag: "--resume",
+			},
+		},
+	}
+	info := session.Info{
+		Template:   "runner",
+		Provider:   "runner",
+		Command:    "stale",
+		WorkDir:    "/tmp/workdir",
+		SessionKey: "abc-123",
+	}
+
+	cmd, _ := buildResumeCommand(t.TempDir(), cfg, info, "", map[string]string{
+		"session_origin": "manual",
+	}, io.Discard)
+	want := "true provider --resume abc-123"
+	if cmd != want {
+		t.Fatalf("resume command = %q, want %q", cmd, want)
+	}
+}
+
+func TestBuildResumeCommandProviderKindPrefersPersistedProvider(t *testing.T) {
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Providers: map[string]config.ProviderSpec{
+			"stored-provider": {
+				Command:    "true",
+				Args:       []string{"stored"},
+				ResumeFlag: "--resume",
+			},
+			"template-provider": {
+				Command:    "true",
+				Args:       []string{"template"},
+				ResumeFlag: "--resume",
+			},
+		},
+	}
+	info := session.Info{
+		Template:   "template-provider",
+		Provider:   "stored-provider",
+		Command:    "stale",
+		WorkDir:    "/tmp/workdir",
+		SessionKey: "abc-123",
+	}
+
+	cmd, _ := buildResumeCommand(t.TempDir(), cfg, info, "provider", nil, io.Discard)
+	want := "true stored --resume abc-123"
 	if cmd != want {
 		t.Fatalf("resume command = %q, want %q", cmd, want)
 	}
@@ -1120,7 +1311,7 @@ func TestSessionNewAliasOwner_UsesConfiguredNamedIdentity(t *testing.T) {
 	}
 }
 
-func TestCmdSessionListJSONNoSessionsReturnsEmptyArray(t *testing.T) {
+func TestCmdSessionListJSONNoSessionsReturnsEmptyEnvelope(t *testing.T) {
 	t.Setenv("GC_BEADS", "file")
 	t.Setenv("GC_SESSION", "fake")
 
@@ -1138,16 +1329,205 @@ func TestCmdSessionListJSONNoSessionsReturnsEmptyArray(t *testing.T) {
 	if strings.Contains(stdout.String(), "No sessions found") {
 		t.Fatalf("stdout = %q, want JSON only", stdout.String())
 	}
-	var got []session.Info
+	var got sessionListJSON
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-		t.Fatalf("stdout is not a JSON session array: %v; stdout=%q", err, stdout.String())
+		t.Fatalf("stdout is not a JSON session list object: %v; stdout=%q", err, stdout.String())
 	}
-	if got == nil {
+	if got.SchemaVersion != "1" {
+		t.Fatalf("schema_version = %q, want 1; stdout=%q", got.SchemaVersion, stdout.String())
+	}
+	if got.Sessions == nil {
 		t.Fatalf("sessions JSON = nil, want empty array; stdout=%q", stdout.String())
 	}
-	if len(got) != 0 {
-		t.Fatalf("sessions = %d, want 0; stdout=%q", len(got), stdout.String())
+	if len(got.Sessions) != 0 || got.Summary.Total != 0 {
+		t.Fatalf("sessions = %d summary=%+v, want empty; stdout=%q", len(got.Sessions), got.Summary, stdout.String())
 	}
+}
+
+// TestCmdSessionList_RendersLastNudgeColumn pins the table rendering of the
+// "LAST NUDGE" column added by the warm-idle ACP nudge fix: the header is
+// emitted, sessions stamped with metadata.last_nudge_delivered_at render as
+// "<duration> ago", and sessions without the stamp fall back to "-".
+func TestCmdSessionList_RendersLastNudgeColumn(t *testing.T) {
+	clearGCEnv(t)
+	clearInheritedCityRoutingEnv(t)
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_SESSION", "fake")
+
+	cityDir := t.TempDir()
+	t.Setenv("GC_CITY", cityDir)
+	writeNamedSessionCityTOML(t, cityDir)
+
+	store, err := openCityStoreAt(cityDir)
+	if err != nil {
+		t.Fatalf("openCityStoreAt(%q): %v", cityDir, err)
+	}
+
+	nudgeStamp := time.Now().Add(-2*time.Hour - 30*time.Minute).UTC().Format(time.RFC3339)
+	if _, err := store.Create(beads.Bead{
+		Title:  "nudged-session",
+		Type:   session.BeadType,
+		Labels: []string{session.LabelSession},
+		Metadata: map[string]string{
+			"session_name":                       "nudged-session",
+			"template":                           "worker",
+			"state":                              "asleep",
+			session.MetadataLastNudgeDeliveredAt: nudgeStamp,
+		},
+	}); err != nil {
+		t.Fatalf("store.Create(nudged session bead): %v", err)
+	}
+
+	if _, err := store.Create(beads.Bead{
+		Title:  "quiet-session",
+		Type:   session.BeadType,
+		Labels: []string{session.LabelSession},
+		Metadata: map[string]string{
+			"session_name": "quiet-session",
+			"template":     "worker",
+			"state":        "asleep",
+		},
+	}); err != nil {
+		t.Fatalf("store.Create(quiet session bead): %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := cmdSessionList("", "", false, &stdout, &stderr); code != 0 {
+		t.Fatalf("cmdSessionList() = %d, want 0; stderr=%s", code, stderr.String())
+	}
+
+	out := stdout.String()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) < 1 || !strings.Contains(lines[0], "LAST NUDGE") {
+		t.Fatalf("missing LAST NUDGE column header; first line = %q\nfull output:\n%s", firstLine(lines), out)
+	}
+	if !strings.Contains(out, "2h ago") {
+		t.Fatalf("output missing formatted LAST NUDGE (want %q) for nudged session:\n%s", "2h ago", out)
+	}
+
+	nudgedRow := findRowContaining(lines, "nudged-session")
+	if nudgedRow == "" {
+		t.Fatalf("output missing row for nudged session:\n%s", out)
+	}
+	if got := lastField(nudgedRow); got != "ago" {
+		t.Fatalf("nudged-session row last field = %q, want %q; row=%q", got, "ago", nudgedRow)
+	}
+
+	quietRow := findRowContaining(lines, "quiet-session")
+	if quietRow == "" {
+		t.Fatalf("output missing row for quiet session:\n%s", out)
+	}
+	if got := lastField(quietRow); got != "-" {
+		t.Fatalf("quiet-session LAST NUDGE = %q, want %q; row=%q", got, "-", quietRow)
+	}
+}
+
+func TestCmdSessionListJSONOmitZeroLastNudgeDeliveredAt(t *testing.T) {
+	clearGCEnv(t)
+	clearInheritedCityRoutingEnv(t)
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_SESSION", "fake")
+
+	cityDir := t.TempDir()
+	t.Setenv("GC_CITY", cityDir)
+	writeNamedSessionCityTOML(t, cityDir)
+
+	store, err := openCityStoreAt(cityDir)
+	if err != nil {
+		t.Fatalf("openCityStoreAt(%q): %v", cityDir, err)
+	}
+
+	nudgeStamp := time.Now().Add(-5 * time.Minute).UTC().Truncate(time.Second)
+	if _, err := store.Create(beads.Bead{
+		Title:  "nudged-session",
+		Type:   session.BeadType,
+		Labels: []string{session.LabelSession},
+		Metadata: map[string]string{
+			"session_name":                       "nudged-session",
+			"template":                           "worker",
+			"state":                              "asleep",
+			session.MetadataLastNudgeDeliveredAt: nudgeStamp.Format(time.RFC3339),
+		},
+	}); err != nil {
+		t.Fatalf("store.Create(nudged session bead): %v", err)
+	}
+
+	if _, err := store.Create(beads.Bead{
+		Title:  "quiet-session",
+		Type:   session.BeadType,
+		Labels: []string{session.LabelSession},
+		Metadata: map[string]string{
+			"session_name": "quiet-session",
+			"template":     "worker",
+			"state":        "asleep",
+		},
+	}); err != nil {
+		t.Fatalf("store.Create(quiet session bead): %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := cmdSessionList("", "", true, &stdout, &stderr); code != 0 {
+		t.Fatalf("cmdSessionList(--json) = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), `"last_nudge_delivered_at": "0001-01-01`) {
+		t.Fatalf("stdout contains zero-time last nudge timestamp:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "LastNudgeDeliveredAt") {
+		t.Fatalf("stdout uses Go field name for last nudge timestamp:\n%s", stdout.String())
+	}
+
+	var got sessionListJSON
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not a JSON session list object: %v; stdout=%q", err, stdout.String())
+	}
+	quiet := sessionListJSONRowBySessionName(got.Sessions, "quiet-session")
+	if quiet == nil {
+		t.Fatalf("missing quiet-session row in JSON output:\n%s", stdout.String())
+	}
+	if quiet.LastNudgeDeliveredAt != nil {
+		t.Fatalf("quiet-session last_nudge_delivered_at present, want omitted: %#v", quiet)
+	}
+
+	nudged := sessionListJSONRowBySessionName(got.Sessions, "nudged-session")
+	if nudged == nil {
+		t.Fatalf("missing nudged-session row in JSON output:\n%s", stdout.String())
+	}
+	if got, want := nudged.LastNudgeDeliveredAt.Format(time.RFC3339), nudgeStamp.Format(time.RFC3339); got != want {
+		t.Fatalf("nudged-session last_nudge_delivered_at = %#v, want %q; row=%#v", got, want, nudged)
+	}
+}
+
+func sessionListJSONRowBySessionName(rows []sessionListJSONRow, name string) *sessionListJSONRow {
+	for _, row := range rows {
+		if row.SessionName == name {
+			return &row
+		}
+	}
+	return nil
+}
+
+func firstLine(lines []string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	return lines[0]
+}
+
+func findRowContaining(lines []string, needle string) string {
+	for _, line := range lines {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	return ""
+}
+
+func lastField(row string) string {
+	fields := strings.Fields(row)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[len(fields)-1]
 }
 
 func TestCmdSessionNew_AllowsReservedNamedAliasWithController(t *testing.T) {

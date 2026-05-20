@@ -648,8 +648,15 @@ func newSessionListCmd(stdout, stderr io.Writer) *cobra.Command {
 
 // cmdSessionList is the CLI entry point for "gc session list".
 func cmdSessionList(stateFilter, templateFilter string, jsonOutput bool, stdout, stderr io.Writer) int {
-	store, code := openCityStore(stderr, "gc session list")
+	storeStderr := stderr
+	if jsonOutput {
+		storeStderr = io.Discard
+	}
+	store, code := openCityStore(storeStderr, "gc session list")
 	if store == nil {
+		if jsonOutput {
+			return writeJSONError(stdout, stderr, "store_open_failed", "gc session list: opening bead store failed", code)
+		}
 		return code
 	}
 
@@ -660,6 +667,7 @@ func cmdSessionList(stateFilter, templateFilter string, jsonOutput bool, stdout,
 	// need wait-state computation.
 	type waitResult struct {
 		set map[string]bool
+		err error
 	}
 	var waitCh chan waitResult
 
@@ -667,15 +675,18 @@ func cmdSessionList(stateFilter, templateFilter string, jsonOutput bool, stdout,
 		waitCh = make(chan waitResult, 1)
 
 		go func() {
-			waitCh <- waitResult{set: readyWaitSetForList(store)}
+			set, err := readyWaitSetForList(store)
+			waitCh <- waitResult{set: set, err: err}
 		}()
 	}
 
-	allSessionBeads, err := store.List(beads.ListQuery{
-		Label: session.LabelSession,
-		Sort:  beads.SortCreatedDesc,
+	allSessionBeads, err := session.ListAllSessionBeads(store, beads.ListQuery{
+		Sort: beads.SortCreatedDesc,
 	})
 	if err != nil {
+		if jsonOutput {
+			return writeJSONError(stdout, stderr, "session_list_failed", fmt.Sprintf("gc session list: listing sessions: %v", err), 1)
+		}
 		fmt.Fprintf(stderr, "gc session list: listing sessions: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
@@ -684,6 +695,9 @@ func cmdSessionList(stateFilter, templateFilter string, jsonOutput bool, stdout,
 	sp := newSessionProviderFromContext(providerCtx, sessionBeads)
 	catalog, err := workerSessionCatalogWithConfig("", store, sp, providerCtx.cfg)
 	if err != nil {
+		if jsonOutput {
+			return writeJSONError(stdout, stderr, "session_catalog_failed", fmt.Sprintf("gc session list: %v", err), 1)
+		}
 		fmt.Fprintf(stderr, "gc session list: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
@@ -691,10 +705,7 @@ func cmdSessionList(stateFilter, templateFilter string, jsonOutput bool, stdout,
 	sessions := listResult.Sessions
 
 	if jsonOutput {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(sessions) //nolint:errcheck // best-effort stdout
-		return 0
+		return writeSessionListJSON(sessions, stateFilter, templateFilter, stdout, stderr)
 	}
 
 	// Build bead index from the beads already fetched by ListFull (no duplicate query).
@@ -703,7 +714,11 @@ func cmdSessionList(stateFilter, templateFilter string, jsonOutput bool, stdout,
 		beadIndex[b.ID] = b
 	}
 
-	readyWaitSet := (<-waitCh).set
+	waitRes := <-waitCh
+	if waitRes.err != nil {
+		fmt.Fprintf(stderr, "gc session list: ready wait indicators degraded: %v\n", waitRes.err) //nolint:errcheck // best-effort stderr
+	}
+	readyWaitSet := waitRes.set
 	cfg := providerCtx.cfg
 	poolDesired := cliPoolDesired(cfg)
 
@@ -729,7 +744,7 @@ func cmdSessionList(stateFilter, templateFilter string, jsonOutput bool, stdout,
 	cachedSP := &attachmentCachingProvider{Provider: sp, cache: attachedSet}
 
 	w := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tTEMPLATE\tSTATE\tREASON\tTARGET\tTITLE\tAGE\tLAST ACTIVE") //nolint:errcheck // best-effort stdout
+	fmt.Fprintln(w, "ID\tTEMPLATE\tSTATE\tREASON\tTARGET\tTITLE\tAGE\tLAST ACTIVE\tLAST NUDGE") //nolint:errcheck // best-effort stdout
 	for _, s := range sessions {
 		state := string(s.State)
 		if s.State == "" {
@@ -743,10 +758,146 @@ func cmdSessionList(stateFilter, templateFilter string, jsonOutput bool, stdout,
 		if !s.LastActive.IsZero() {
 			lastActive = formatDuration(time.Since(s.LastActive)) + " ago"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.ID, s.Template, state, reason, target, title, age, lastActive) //nolint:errcheck // best-effort stdout
+		lastNudge := "-"
+		if !s.LastNudgeDeliveredAt.IsZero() {
+			lastNudge = formatDuration(time.Since(s.LastNudgeDeliveredAt)) + " ago"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.ID, s.Template, state, reason, target, title, age, lastActive, lastNudge) //nolint:errcheck // best-effort stdout
 	}
 	_ = w.Flush() //nolint:errcheck // best-effort stdout
 	return 0
+}
+
+type sessionListJSONRow struct {
+	ID                   string        `json:"id"`
+	Name                 string        `json:"name,omitempty"`
+	Template             string        `json:"template"`
+	Provider             string        `json:"provider,omitempty"`
+	State                session.State `json:"state"`
+	Title                string        `json:"title,omitempty"`
+	Rig                  string        `json:"rig,omitempty"`
+	Alias                string        `json:"alias,omitempty"`
+	AgentName            string        `json:"agent_name,omitempty"`
+	Transport            string        `json:"transport,omitempty"`
+	Command              string        `json:"command,omitempty"`
+	WorkDir              string        `json:"work_dir,omitempty"`
+	SessionName          string        `json:"session_name,omitempty"`
+	SessionKey           string        `json:"session_key,omitempty"`
+	ResumeFlag           string        `json:"resume_flag,omitempty"`
+	ResumeStyle          string        `json:"resume_style,omitempty"`
+	ResumeCommand        string        `json:"resume_command,omitempty"`
+	CreatedAt            time.Time     `json:"created_at"`
+	LastActive           time.Time     `json:"last_active"`
+	LastNudgeDeliveredAt *time.Time    `json:"last_nudge_delivered_at,omitempty"`
+	Attached             bool          `json:"attached"`
+	Closed               bool          `json:"closed"`
+}
+
+type sessionListJSON struct {
+	SchemaVersion string               `json:"schema_version"`
+	Filters       sessionListFilters   `json:"filters"`
+	Sessions      []sessionListJSONRow `json:"sessions"`
+	Summary       sessionListSummary   `json:"summary"`
+}
+
+type sessionListFilters struct {
+	State    string `json:"state,omitempty"`
+	Template string `json:"template,omitempty"`
+}
+
+type sessionListSummary struct {
+	Total     int `json:"total"`
+	Active    int `json:"active"`
+	Suspended int `json:"suspended"`
+	Closed    int `json:"closed"`
+}
+
+func writeSessionListJSON(sessions []session.Info, stateFilter, templateFilter string, stdout, stderr io.Writer) int {
+	rows := sessionListJSONRows(sessions)
+	result := sessionListJSON{
+		SchemaVersion: "1",
+		Filters:       sessionListFilters{State: stateFilter, Template: templateFilter},
+		Sessions:      rows,
+		Summary:       summarizeSessionList(rows),
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(result); err != nil {
+		fmt.Fprintf(stderr, "gc session list: %v\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	return 0
+}
+
+func summarizeSessionList(rows []sessionListJSONRow) sessionListSummary {
+	summary := sessionListSummary{Total: len(rows)}
+	for _, row := range rows {
+		switch {
+		case row.Closed:
+			summary.Closed++
+		case row.State == session.StateActive:
+			summary.Active++
+		case row.State == session.StateSuspended:
+			summary.Suspended++
+		}
+	}
+	return summary
+}
+
+func sessionListJSONRows(sessions []session.Info) []sessionListJSONRow {
+	rows := make([]sessionListJSONRow, len(sessions))
+	for i, s := range sessions {
+		rows[i] = sessionListJSONRow{
+			ID:            s.ID,
+			Name:          sessionListJSONName(s),
+			Template:      s.Template,
+			State:         s.State,
+			Closed:        s.Closed,
+			Title:         s.Title,
+			Rig:           sessionListJSONRig(s),
+			Alias:         s.Alias,
+			AgentName:     s.AgentName,
+			Provider:      s.Provider,
+			Transport:     s.Transport,
+			Command:       s.Command,
+			WorkDir:       s.WorkDir,
+			SessionName:   s.SessionName,
+			SessionKey:    s.SessionKey,
+			ResumeFlag:    s.ResumeFlag,
+			ResumeStyle:   s.ResumeStyle,
+			ResumeCommand: s.ResumeCommand,
+			CreatedAt:     s.CreatedAt,
+			LastActive:    s.LastActive,
+			Attached:      s.Attached,
+		}
+		if !s.LastNudgeDeliveredAt.IsZero() {
+			stamp := s.LastNudgeDeliveredAt.UTC()
+			rows[i].LastNudgeDeliveredAt = &stamp
+		}
+	}
+	return rows
+}
+
+func sessionListJSONName(s session.Info) string {
+	if s.Alias != "" {
+		return s.Alias
+	}
+	if s.SessionName != "" {
+		return s.SessionName
+	}
+	return s.ID
+}
+
+func sessionListJSONRig(s session.Info) string {
+	template := strings.TrimSpace(s.Template)
+	if before, _, ok := strings.Cut(template, "/"); ok {
+		return before
+	}
+	name := strings.TrimSpace(s.SessionName)
+	if before, _, ok := strings.Cut(name, "--"); ok {
+		return before
+	}
+	return ""
 }
 
 func sessionListTarget(s session.Info) string {
@@ -929,11 +1080,8 @@ func metadataTimeInFuture(raw string, now time.Time) bool {
 	return err == nil && !t.IsZero() && now.Before(t)
 }
 
-func readyWaitSetForList(store beads.Store) map[string]bool {
+func readyWaitSetForList(store beads.Store) (map[string]bool, error) {
 	items, err := loadWaitBeads(store)
-	if err != nil {
-		return nil
-	}
 	ready := make(map[string]bool)
 	for _, item := range items {
 		if item.Metadata["state"] != waitStateReady {
@@ -944,7 +1092,7 @@ func readyWaitSetForList(store beads.Store) map[string]bool {
 			ready[sessionID] = true
 		}
 	}
-	return ready
+	return ready, err
 }
 
 // cliPoolDesired computes a static pool desired count from config.
@@ -1054,11 +1202,10 @@ func cmdSessionAttach(args []string, stdout, stderr io.Writer) int {
 //
 // stderr receives projection errors (use io.Discard to ignore).
 //
-// sessionKind mirrors the real_world_app_session_kind bead metadata: "provider" means
-// the session was created from a bare provider name (not an agent template),
-// so the agent-template lookup should be skipped. This matches the guard in
-// the API handler (handler_session_chat.go).
-func buildResumeCommand(cityPath string, cfg *config.City, info session.Info, sessionKind string, stderr io.Writer) (string, runtime.Config) {
+// sessionKind is the persisted session kind when available. A provider session
+// was created from a bare provider name, so agent-template lookup must be
+// skipped to avoid agent/provider name collisions.
+func buildResumeCommand(cityPath string, cfg *config.City, info session.Info, sessionKind string, metadata map[string]string, stderr io.Writer) (string, runtime.Config) {
 	cmd := session.BuildResumeCommand(info)
 	if cfg == nil {
 		return cmd, runtime.Config{WorkDir: info.WorkDir}
@@ -1072,8 +1219,25 @@ func buildResumeCommand(cityPath string, cfg *config.City, info session.Info, se
 		// Build command with default args and settings, matching the
 		// reconciler's template_resolve.go command construction.
 		command := resolved.CommandString()
-		if defaultArgs := resolved.ResolveDefaultArgs(); len(defaultArgs) > 0 {
-			command = command + " " + shellquote.Join(defaultArgs)
+		resumeCommand := resolved.ResumeCommand
+		appendDefaultArgs := func() {
+			if defaultArgs := resolved.ResolveDefaultArgs(); len(defaultArgs) > 0 {
+				command = command + " " + shellquote.Join(defaultArgs)
+			}
+		}
+		if overrides, err := session.ParseTemplateOverrides(metadata); err == nil {
+			transport := strings.TrimSpace(info.Transport)
+			launchCommand, err := config.BuildProviderLaunchCommand(cityPath, resolved, overrides, transport)
+			if err == nil && strings.TrimSpace(launchCommand.Command) != "" {
+				command = launchCommand.Command
+			} else {
+				appendDefaultArgs()
+			}
+			if command, err := config.BuildProviderResumeCommand(resolved, overrides); err == nil && strings.TrimSpace(command) != "" {
+				resumeCommand = command
+			}
+		} else {
+			appendDefaultArgs()
 		}
 		// buildResumeCommand is best-effort: log projection failures and
 		// continue so `gc session attach` still starts the agent. The strict
@@ -1081,7 +1245,7 @@ func buildResumeCommand(cityPath string, cfg *config.City, info session.Info, se
 		// creation on projection errors.
 		providerFamily := resolvedProviderLaunchFamily(resolved)
 		sa, saErr := ensureClaudeSettingsArgs(fsys.OSFS{}, cityPath, providerFamily, stderr)
-		if saErr == nil && sa != "" {
+		if saErr == nil && sa != "" && !storedCommandHasSettingsArg(command) {
 			command = command + " " + sa
 		} else if saErr != nil {
 			// Projection failed this tick. Fall back to the last-known-good
@@ -1100,32 +1264,41 @@ func buildResumeCommand(cityPath string, cfg *config.City, info session.Info, se
 		resolvedInfo.Provider = resolved.Name
 		resolvedInfo.ResumeFlag = resolved.ResumeFlag
 		resolvedInfo.ResumeStyle = resolved.ResumeStyle
-		resolvedInfo.ResumeCommand = resolved.ResumeCommand
+		resolvedInfo.ResumeCommand = resumeCommand
 		return session.BuildResumeCommand(resolvedInfo), runtime.Config{
 			WorkDir:                info.WorkDir,
 			ReadyPromptPrefix:      resolved.ReadyPromptPrefix,
 			ReadyDelayMs:           resolved.ReadyDelayMs,
 			ProcessNames:           resolved.ProcessNames,
 			EmitsPermissionWarning: resolved.EmitsPermissionWarning,
+			AcceptStartupDialogs:   resolved.AcceptStartupDialogs,
 			Env:                    resolved.Env,
 		}
 	}
 
-	// Check persisted kind to avoid agent/provider name collisions.
-	// If kind is "provider", skip the agent template lookup entirely.
-	if sessionKind != "provider" {
-		// Prefer the current resolved agent template/provider config over stale
-		// stored command text so submit/restart paths honor provider overrides.
-		if found, ok := resolveAgentIdentity(cfg, info.Template, ""); ok {
+	// Prefer the current resolved agent template/provider config over stale
+	// stored command text so submit/restart paths honor provider overrides.
+	// Use the same collision guard as the runtime resolver so provider-track
+	// sessions do not accidentally resolve through an agent with the same name.
+	found, foundAgent := resolveAgentIdentity(cfg, info.Template, "")
+	if session.UseAgentTemplateForProviderResolution(sessionKind, metadata, info.Provider, found.Provider, foundAgent) {
+		if foundAgent {
 			if resolved, err := config.ResolveProvider(&found, &cfg.Workspace, cfg.Providers, exec.LookPath); err == nil {
 				return buildResolved(resolved)
 			}
 		}
 	}
 
-	// Fallback for provider-only sessions whose Template is a provider name.
-	if resolved, err := config.ResolveProvider(&config.Agent{Provider: info.Template}, &cfg.Workspace, cfg.Providers, exec.LookPath); err == nil {
-		return buildResolved(resolved)
+	// Fallback for provider-only sessions. Prefer the persisted provider so
+	// resumed sessions use the same schema-backed provider selected at create.
+	for _, providerName := range []string{info.Provider, info.Template} {
+		providerName = strings.TrimSpace(providerName)
+		if providerName == "" {
+			continue
+		}
+		if resolved, err := config.ResolveProvider(&config.Agent{Provider: providerName}, &cfg.Workspace, cfg.Providers, exec.LookPath); err == nil {
+			return buildResolved(resolved)
+		}
 	}
 
 	return cmd, runtime.Config{WorkDir: info.WorkDir}
@@ -1251,22 +1424,18 @@ func cmdSessionClose(args []string, stdout, stderr io.Writer) int {
 	}
 
 	sp := newSessionProvider()
-	nudgeIDs, err := waitNudgeIDsForSession(store, sessionID)
-	if err != nil {
-		fmt.Fprintf(stderr, "gc session close: %v\n", err) //nolint:errcheck // best-effort stderr
-		return 1
-	}
 	handle, err := workerHandleForSessionWithConfig(cityPath, store, sp, cfg, sessionID)
 	if err != nil {
 		fmt.Fprintf(stderr, "gc session close: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	if err := handle.Close(context.Background()); err != nil {
+	closeResult, err := handle.CloseDetailed(context.Background())
+	if err != nil {
 		fmt.Fprintf(stderr, "gc session close: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
 	if cityErr == nil {
-		if err := withdrawQueuedWaitNudges(cityPath, nudgeIDs); err != nil {
+		if err := withdrawQueuedWaitNudges(cityPath, closeResult.WaitNudgeIDs); err != nil {
 			fmt.Fprintf(stderr, "gc session close: warning: withdrawing queued wait nudges: %v\n", err) //nolint:errcheck // best-effort stderr
 		}
 	}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gastownhall/gascity/internal/beads"
+	"github.com/gastownhall/gascity/internal/clock"
 	"github.com/gastownhall/gascity/internal/runtime"
 	sessionauto "github.com/gastownhall/gascity/internal/runtime/auto"
 	"github.com/gastownhall/gascity/internal/sessionlog"
@@ -267,6 +268,255 @@ func TestCreate(t *testing.T) {
 	}
 }
 
+func TestUpdateTemplateOverridesRejectsRunningSessionUnderLock(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+
+	info, err := mgr.Create(context.Background(), "helper", "my chat", "claude", "/tmp", "claude", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := mgr.UpdateTemplateOverrides(info.ID, map[string]string{"permission_mode": "auto-edit"}); !errors.Is(err, ErrSessionActive) {
+		t.Fatalf("UpdateTemplateOverrides active error = %v, want ErrSessionActive", err)
+	}
+}
+
+func TestUpdateTemplateOverridesRejectsLiveRuntimeEvenWhenStateLooksDormant(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+
+	info, err := mgr.Create(context.Background(), "helper", "my chat", "claude", "/tmp", "claude", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.SetMetadataBatch(info.ID, map[string]string{"state": string(StateAsleep)}); err != nil {
+		t.Fatalf("SetMetadataBatch: %v", err)
+	}
+
+	if _, err := mgr.UpdateTemplateOverrides(info.ID, map[string]string{"permission_mode": "auto-edit"}); !errors.Is(err, ErrSessionActive) {
+		t.Fatalf("UpdateTemplateOverrides live-runtime error = %v, want ErrSessionActive", err)
+	}
+}
+
+func TestUpdateTemplateOverridesAllowsSuspendedSession(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+
+	info, err := mgr.Create(context.Background(), "helper", "my chat", "claude", "/tmp", "claude", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := mgr.Suspend(info.ID); err != nil {
+		t.Fatalf("Suspend: %v", err)
+	}
+
+	overrides, err := mgr.UpdateTemplateOverrides(info.ID, map[string]string{"permission_mode": "auto-edit"})
+	if err != nil {
+		t.Fatalf("UpdateTemplateOverrides suspended: %v", err)
+	}
+	if got := overrides["permission_mode"]; got != "auto-edit" {
+		t.Fatalf("permission_mode = %q, want auto-edit", got)
+	}
+	b, err := store.Get(info.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got := b.Metadata["opt_permission_mode"]; got != "auto-edit" {
+		t.Fatalf("opt_permission_mode = %q, want auto-edit", got)
+	}
+}
+
+func TestUpdateTemplateOverridesRejectsRecentWakeInFlight(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+
+	info, err := mgr.Create(context.Background(), "helper", "my chat", "claude", "/tmp", "claude", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := mgr.Suspend(info.ID); err != nil {
+		t.Fatalf("Suspend: %v", err)
+	}
+	if err := store.SetMetadata(info.ID, "last_woke_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatalf("SetMetadata(last_woke_at): %v", err)
+	}
+
+	_, err = mgr.UpdateTemplateOverrides(info.ID, map[string]string{"permission_mode": "auto-edit"})
+	if !errors.Is(err, ErrSessionActive) {
+		t.Fatalf("UpdateTemplateOverrides recent wake err = %v, want ErrSessionActive", err)
+	}
+}
+
+func TestUpdateTemplateOverridesRejectsPendingCreateClaim(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+
+	info, err := mgr.Create(context.Background(), "helper", "my chat", "claude", "/tmp", "claude", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := mgr.Suspend(info.ID); err != nil {
+		t.Fatalf("Suspend: %v", err)
+	}
+	if err := store.SetMetadata(info.ID, "pending_create_claim", "true"); err != nil {
+		t.Fatalf("SetMetadata(pending_create_claim): %v", err)
+	}
+
+	_, err = mgr.UpdateTemplateOverrides(info.ID, map[string]string{"permission_mode": "auto-edit"})
+	if !errors.Is(err, ErrSessionActive) {
+		t.Fatalf("UpdateTemplateOverrides pending create err = %v, want ErrSessionActive", err)
+	}
+}
+
+func TestUpdateTemplateOverridesWakeInFlightGraceBoundary(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+	mgr.clk = &clock.Fake{Time: time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)}
+
+	info, err := mgr.Create(context.Background(), "helper", "my chat", "claude", "/tmp", "claude", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := mgr.Suspend(info.ID); err != nil {
+		t.Fatalf("Suspend: %v", err)
+	}
+
+	insideGrace := mgr.clk.Now().Add(-templateOverrideWakeInFlightGrace() + time.Second).UTC().Format(time.RFC3339)
+	if err := store.SetMetadata(info.ID, "last_woke_at", insideGrace); err != nil {
+		t.Fatalf("SetMetadata(last_woke_at inside): %v", err)
+	}
+	_, err = mgr.UpdateTemplateOverrides(info.ID, map[string]string{"permission_mode": "auto-edit"})
+	if !errors.Is(err, ErrSessionActive) {
+		t.Fatalf("UpdateTemplateOverrides inside grace err = %v, want ErrSessionActive", err)
+	}
+
+	outsideGrace := mgr.clk.Now().Add(-templateOverrideWakeInFlightGrace() - time.Second).UTC().Format(time.RFC3339)
+	if err := store.SetMetadata(info.ID, "last_woke_at", outsideGrace); err != nil {
+		t.Fatalf("SetMetadata(last_woke_at outside): %v", err)
+	}
+	overrides, err := mgr.UpdateTemplateOverrides(info.ID, map[string]string{"permission_mode": "auto-edit"})
+	if err != nil {
+		t.Fatalf("UpdateTemplateOverrides outside grace: %v", err)
+	}
+	if got := overrides["permission_mode"]; got != "auto-edit" {
+		t.Fatalf("permission_mode = %q, want auto-edit", got)
+	}
+}
+
+func TestUpdateTemplateOverridesAllowsOldWakeTimestamp(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+
+	info, err := mgr.Create(context.Background(), "helper", "my chat", "claude", "/tmp", "claude", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := mgr.Suspend(info.ID); err != nil {
+		t.Fatalf("Suspend: %v", err)
+	}
+	oldWake := time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339)
+	if err := store.SetMetadata(info.ID, "last_woke_at", oldWake); err != nil {
+		t.Fatalf("SetMetadata(last_woke_at): %v", err)
+	}
+
+	overrides, err := mgr.UpdateTemplateOverrides(info.ID, map[string]string{"permission_mode": "auto-edit"})
+	if err != nil {
+		t.Fatalf("UpdateTemplateOverrides old wake: %v", err)
+	}
+	if got := overrides["permission_mode"]; got != "auto-edit" {
+		t.Fatalf("permission_mode = %q, want auto-edit", got)
+	}
+}
+
+func TestUpdateTemplateOverridesUsesManagerClockForWakeWindow(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+	mgr.clk = &clock.Fake{Time: time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)}
+
+	info, err := mgr.Create(context.Background(), "helper", "my chat", "claude", "/tmp", "claude", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := mgr.Suspend(info.ID); err != nil {
+		t.Fatalf("Suspend: %v", err)
+	}
+	oldForManagerClock := mgr.clk.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339)
+	if err := store.SetMetadata(info.ID, "last_woke_at", oldForManagerClock); err != nil {
+		t.Fatalf("SetMetadata(last_woke_at): %v", err)
+	}
+
+	overrides, err := mgr.UpdateTemplateOverrides(info.ID, map[string]string{"permission_mode": "auto-edit"})
+	if err != nil {
+		t.Fatalf("UpdateTemplateOverrides old fake-clock wake: %v", err)
+	}
+	if got := overrides["permission_mode"]; got != "auto-edit" {
+		t.Fatalf("permission_mode = %q, want auto-edit", got)
+	}
+}
+
+func TestUpdateTemplateOverridesAllowsFailedCreateWithRecentWake(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+	mgr.clk = &clock.Fake{Time: time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)}
+
+	info, err := mgr.Create(context.Background(), "helper", "my chat", "claude", "/tmp", "claude", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := mgr.Suspend(info.ID); err != nil {
+		t.Fatalf("Suspend: %v", err)
+	}
+	if err := store.SetMetadataBatch(info.ID, map[string]string{
+		"state":        string(StateFailedCreate),
+		"last_woke_at": mgr.clk.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("SetMetadataBatch: %v", err)
+	}
+
+	overrides, err := mgr.UpdateTemplateOverrides(info.ID, map[string]string{"permission_mode": "auto-edit"})
+	if err != nil {
+		t.Fatalf("UpdateTemplateOverrides failed-create recent wake: %v", err)
+	}
+	if got := overrides["permission_mode"]; got != "auto-edit" {
+		t.Fatalf("permission_mode = %q, want auto-edit", got)
+	}
+}
+
+func TestUpdateTemplateOverridesRepairsMalformedMetadata(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+
+	info, err := mgr.Create(context.Background(), "helper", "my chat", "claude", "/tmp", "claude", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := mgr.Suspend(info.ID); err != nil {
+		t.Fatalf("Suspend: %v", err)
+	}
+	if err := store.SetMetadata(info.ID, "template_overrides", "{not-json"); err != nil {
+		t.Fatalf("SetMetadata: %v", err)
+	}
+
+	overrides, err := mgr.UpdateTemplateOverrides(info.ID, map[string]string{"permission_mode": "auto-edit"})
+	if err != nil {
+		t.Fatalf("UpdateTemplateOverrides malformed metadata: %v", err)
+	}
+	if got := overrides["permission_mode"]; got != "auto-edit" {
+		t.Fatalf("permission_mode = %q, want auto-edit", got)
+	}
+}
+
 func TestCreateConfirmsStartedStateWithoutControllerDriftHash(t *testing.T) {
 	store := beads.NewMemStore()
 	sp := runtime.NewFake()
@@ -410,6 +660,63 @@ func TestGetSurfacesAgentNameMetadata(t *testing.T) {
 	}
 	if got.AgentName != "myrig/helper-adhoc-123" {
 		t.Fatalf("AgentName = %q, want %q", got.AgentName, "myrig/helper-adhoc-123")
+	}
+}
+
+// TestGetSurfacesLastNudgeDeliveredAtMetadata verifies that
+// `metadata.last_nudge_delivered_at` (stamped by the nudge dispatcher on
+// successful delivery) round-trips through Info.LastNudgeDeliveredAt so
+// `gc session list` can render the "LAST NUDGE" column. The stamp lives
+// on the session bead so operators can spot warm sessions whose delivery
+// loop has stalled (queued items piling up while the timestamp stays old).
+func TestGetSurfacesLastNudgeDeliveredAtMetadata(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+
+	info, err := mgr.CreateBeadOnly("helper", "my chat", "claude", "/tmp", "claude", "", nil, ProviderResume{})
+	if err != nil {
+		t.Fatalf("CreateBeadOnly: %v", err)
+	}
+
+	stamp := time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC)
+	if err := store.SetMetadata(info.ID, MetadataLastNudgeDeliveredAt, stamp.Format(time.RFC3339)); err != nil {
+		t.Fatalf("SetMetadata(%s): %v", MetadataLastNudgeDeliveredAt, err)
+	}
+
+	got, err := mgr.Get(info.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.LastNudgeDeliveredAt.Equal(stamp) {
+		t.Fatalf("LastNudgeDeliveredAt = %v, want %v", got.LastNudgeDeliveredAt, stamp)
+	}
+}
+
+// TestGetIgnoresInvalidLastNudgeDeliveredAtMetadata ensures a malformed
+// metadata value leaves Info.LastNudgeDeliveredAt zero rather than
+// surfacing a parser error. The stamp is best-effort observability —
+// any future schema drift must degrade gracefully instead of breaking
+// the read path that powers `gc session list`.
+func TestGetIgnoresInvalidLastNudgeDeliveredAtMetadata(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+
+	info, err := mgr.CreateBeadOnly("helper", "my chat", "claude", "/tmp", "claude", "", nil, ProviderResume{})
+	if err != nil {
+		t.Fatalf("CreateBeadOnly: %v", err)
+	}
+	if err := store.SetMetadata(info.ID, MetadataLastNudgeDeliveredAt, "not-a-timestamp"); err != nil {
+		t.Fatalf("SetMetadata: %v", err)
+	}
+
+	got, err := mgr.Get(info.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.LastNudgeDeliveredAt.IsZero() {
+		t.Fatalf("LastNudgeDeliveredAt = %v, want zero (unparsable RFC3339 must not surface)", got.LastNudgeDeliveredAt)
 	}
 }
 
@@ -1886,6 +2193,121 @@ func TestPruneDetailedReportsWaitNudges(t *testing.T) {
 	}
 	if len(result.WaitNudgeIDs) != 1 || result.WaitNudgeIDs[0] != "wait-1" {
 		t.Fatalf("result.WaitNudgeIDs = %#v, want [wait-1]", result.WaitNudgeIDs)
+	}
+}
+
+type falseNegativeRuntimeProvider struct {
+	*runtime.Fake
+	falseNames map[string]bool
+}
+
+func (p *falseNegativeRuntimeProvider) IsRunning(name string) bool {
+	if p.falseNames[name] {
+		return false
+	}
+	return p.Fake.IsRunning(name)
+}
+
+func TestObserveRuntime_TreatsLiveProcessAsRunningWhenSessionProbeFalseNegatives(t *testing.T) {
+	base := runtime.NewFake()
+	mgr := NewManager(beads.NewMemStore(), &falseNegativeRuntimeProvider{
+		Fake:       base,
+		falseNames: map[string]bool{"runtime-worker": true},
+	})
+
+	info, err := mgr.Create(context.Background(), "worker", "runtime-worker", "claude", "/tmp", "claude", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	obs := mgr.ObserveRuntimeForInfo(info, []string{"claude"})
+	if !obs.Running || !obs.Alive {
+		t.Fatalf("ObserveRuntimeForInfo() = %#v, want running+alive true despite IsRunning false-negative", obs)
+	}
+}
+
+func TestObserveRuntime_WithoutProcessNamesTreatsRunningSessionAsAlive(t *testing.T) {
+	sp := runtime.NewFake()
+	mgr := NewManager(beads.NewMemStore(), sp)
+
+	info, err := mgr.Create(context.Background(), "worker", "runtime-worker", "claude", "/tmp", "claude", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	obs := mgr.ObserveRuntimeForInfo(info, nil)
+	if !obs.Running || !obs.Alive {
+		t.Fatalf("ObserveRuntimeForInfo() = %#v, want running+alive true when no process names are configured", obs)
+	}
+}
+
+func TestPruneDetailedContinuesAfterWaitLookupLimit(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+
+	info, err := mgr.Create(context.Background(), "default", "S1", "echo s1", "/tmp", "test", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Suspend(info.ID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < SessionWaitLookupLimit+1; i++ {
+		if _, err := store.Create(beads.Bead{
+			Title:  fmt.Sprintf("wait-%d", i),
+			Type:   WaitBeadType,
+			Labels: []string{WaitBeadLabel, "session:" + info.ID},
+			Metadata: map[string]string{
+				"session_id": info.ID,
+				"state":      "pending",
+				"nudge_id":   fmt.Sprintf("wait-nudge-%d", i),
+			},
+		}); err != nil {
+			t.Fatalf("create wait %d: %v", i, err)
+		}
+	}
+
+	result, err := mgr.PruneDetailed(time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("PruneDetailed: %v", err)
+	}
+	if result.Count != 1 {
+		t.Fatalf("result.Count = %d, want 1", result.Count)
+	}
+	if len(result.SessionIDs) != 1 || result.SessionIDs[0] != info.ID {
+		t.Fatalf("result.SessionIDs = %#v, want [%q]", result.SessionIDs, info.ID)
+	}
+	if len(result.WaitNudgeIDs) != SessionWaitLookupLimit+1 {
+		t.Fatalf("result.WaitNudgeIDs count = %d, want full capped count %d", len(result.WaitNudgeIDs), SessionWaitLookupLimit+1)
+	}
+	seen := map[string]bool{}
+	for _, id := range result.WaitNudgeIDs {
+		seen[id] = true
+	}
+	for _, id := range []string{"wait-nudge-0", fmt.Sprintf("wait-nudge-%d", SessionWaitLookupLimit)} {
+		if !seen[id] {
+			t.Fatalf("result.WaitNudgeIDs missing %q from first or later capped page", id)
+		}
+	}
+	sessionBead, err := store.Get(info.ID)
+	if err != nil {
+		t.Fatalf("Get(session): %v", err)
+	}
+	if sessionBead.Status != "closed" {
+		t.Fatalf("session status = %q, want closed", sessionBead.Status)
+	}
+	waits, err := store.List(beads.ListQuery{Label: "session:" + info.ID, IncludeClosed: true})
+	if err != nil {
+		t.Fatalf("list waits: %v", err)
+	}
+	for _, wait := range waits {
+		if !IsWaitBead(wait) {
+			continue
+		}
+		if wait.Status != "closed" || wait.Metadata["state"] != waitStateCanceled {
+			t.Fatalf("wait %s status/state = %q/%q, want closed/canceled", wait.ID, wait.Status, wait.Metadata["state"])
+		}
 	}
 }
 

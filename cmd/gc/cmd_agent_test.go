@@ -239,6 +239,23 @@ schema = 2
 	}
 }
 
+func TestResolveAgentIdentityRejectsCanonicalSingletonPoolSuffix(t *testing.T) {
+	cfg := &config.City{
+		Agents: []config.Agent{
+			{Name: "worker", Dir: "frontend", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(1)},
+		},
+	}
+	if a, ok := resolveAgentIdentity(cfg, "frontend/worker", ""); !ok || a.QualifiedName() != "frontend/worker" {
+		t.Fatalf("resolveAgentIdentity(frontend/worker) = (%q, %v), want canonical template", a.QualifiedName(), ok)
+	}
+	if _, ok := resolveAgentIdentity(cfg, "frontend/worker-1", ""); ok {
+		t.Fatal("resolveAgentIdentity(frontend/worker-1) = true, want false for canonical singleton pool")
+	}
+	if _, ok := resolveAgentIdentity(cfg, "worker-1", ""); ok {
+		t.Fatal("resolveAgentIdentity(worker-1) = true, want false for canonical singleton pool")
+	}
+}
+
 func TestEmitLoadCityConfigWarningsFiltersNonMigrationWarnings(t *testing.T) {
 	var stderr bytes.Buffer
 	emitLoadCityConfigWarnings(&stderr, &config.Provenance{
@@ -247,6 +264,7 @@ func TestEmitLoadCityConfigWarningsFiltersNonMigrationWarnings(t *testing.T) {
 			`/city/pack.toml: [agents] is a deprecated compatibility alias for [agent_defaults]; rewrite the table name to [agent_defaults]`,
 			`/city/pack.toml: both [agent_defaults] and [agents] are present; [agent_defaults] wins on overlapping keys and [agents] only fills gaps`,
 			`/city/pack.toml: "agent_defaults.provider" is not supported in [agent_defaults]; keep using workspace.provider or set provider per agent in agents/<name>/agent.toml`,
+			`/city/city.toml: workspace.provider is deprecated: Set provider per agent in agents/<name>/agent.toml.`,
 			`gc: warning: attachment-list fields (` + "`skills`, `mcp`, `skills_append`, `mcp_append`, `shared_skills`" + `) are deprecated as of v0.15.1 and ignored.`,
 		},
 	})
@@ -263,6 +281,9 @@ func TestEmitLoadCityConfigWarningsFiltersNonMigrationWarnings(t *testing.T) {
 	}
 	if !strings.Contains(output, `"agent_defaults.provider" is not supported`) {
 		t.Fatalf("expected unsupported-key warning, got %q", output)
+	}
+	if strings.Contains(output, `workspace.provider is deprecated`) {
+		t.Fatalf("legacy workspace warnings should stay out of generic command stderr, got %q", output)
 	}
 	if !strings.Contains(output, "attachment-list fields") {
 		t.Fatalf("expected attachment deprecation warning, got %q", output)
@@ -451,6 +472,7 @@ func TestStrictFatalLoadConfigWarningsKeepsMixedTableWarningsFatal(t *testing.T)
 		`/city/pack.toml: [agents] is a deprecated compatibility alias for [agent_defaults]; rewrite the table name to [agent_defaults]`,
 		`/city/pack.toml: both [agent_defaults] and [agents] are present; [agent_defaults] wins on overlapping keys and [agents] only fills gaps`,
 		`/city/pack.toml: "agent_defaults.provider" is not supported in [agent_defaults]; keep using workspace.provider or set provider per agent in agents/<name>/agent.toml`,
+		`/city/city.toml: workspace.provider is deprecated: Set provider per agent in agents/<name>/agent.toml.`,
 		`workspace.name redefined by "/city/defaults.toml"`,
 	}
 

@@ -421,6 +421,161 @@ func TestReconcileSessionBeads_DrainAckWithAssignedOpenWorkSleepsInsteadOfDraini
 	}
 }
 
+// TestReconcileSessionBeads_DrainAckMidPhaseEmitsAssignedWorkEvent pins
+// gastownhall/gascity#2293's Shape A contract: when a session drain-acks
+// while still holding the assignee on an in-progress work bead (the cap-hit
+// shape — worker exited mid-task without nulling assignee), the reconciler
+// MUST emit events.SessionDrainAckedWithAssignedWork carrying the session
+// and bead IDs so pack-side subscribers can apply recovery policy. The SDK
+// reconciler stops at the event; it does not commit, push, or clear assignee.
+func TestReconcileSessionBeads_DrainAckMidPhaseEmitsAssignedWorkEvent(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
+	env.addDesired("worker", "worker", true)
+	fake := events.NewFake()
+	env.rec = fake
+
+	session := env.createSessionBead("worker", "worker")
+	env.markSessionActive(&session)
+
+	stranded, err := env.store.Create(beads.Bead{
+		Title:    "implement phase work",
+		Type:     "task",
+		Status:   "in_progress",
+		Assignee: session.ID,
+	})
+	if err != nil {
+		t.Fatalf("Create(stranded bead): %v", err)
+	}
+
+	dops := newFakeDrainOps()
+	if err := dops.setDrainAck("worker"); err != nil {
+		t.Fatalf("setDrainAck: %v", err)
+	}
+
+	woken := reconcileSessionBeads(
+		context.Background(),
+		[]beads.Bead{session},
+		env.desiredState,
+		map[string]bool{"worker": true},
+		env.cfg,
+		env.sp,
+		env.store,
+		dops,
+		nil,
+		nil,
+		env.dt,
+		nil,
+		false,
+		nil,
+		"",
+		nil,
+		env.clk,
+		env.rec,
+		0,
+		0,
+		&env.stdout,
+		&env.stderr,
+	)
+	if woken != 0 {
+		t.Fatalf("woken = %d, want 0", woken)
+	}
+
+	var matched *events.Event
+	for i := range fake.Events {
+		if fake.Events[i].Type == events.SessionDrainAckedWithAssignedWork {
+			matched = &fake.Events[i]
+			break
+		}
+	}
+	if matched == nil {
+		t.Fatalf("expected %s event, got %d events of other types", events.SessionDrainAckedWithAssignedWork, len(fake.Events))
+	}
+	if !strings.Contains(string(matched.Payload), session.ID) {
+		t.Errorf("event payload does not reference session ID %q: %s", session.ID, matched.Payload)
+	}
+	if !strings.Contains(string(matched.Payload), stranded.ID) {
+		t.Errorf("event payload does not reference stranded bead ID %q: %s", stranded.ID, matched.Payload)
+	}
+
+	// Verify the SDK did NOT mutate the bead's assignee — recovery policy
+	// must live in pack-side subscribers, not the reconciler.
+	got, err := env.store.Get(stranded.ID)
+	if err != nil {
+		t.Fatalf("Get(stranded): %v", err)
+	}
+	if got.Assignee != session.ID {
+		t.Errorf("stranded bead assignee = %q, want %q (SDK must not clear assignee — pack-side recovery)", got.Assignee, session.ID)
+	}
+	if got.Status == "closed" {
+		t.Errorf("stranded bead status = %q, SDK must not close the bead", got.Status)
+	}
+}
+
+// TestReconcileSessionBeads_DrainAckCleanHandoffSuppressesAssignedWorkEvent
+// pins the other half of the Shape A contract: the phase-end handoff path
+// (worker writes --assignee "" before drain-ack) MUST NOT emit the event.
+// Without this discriminator, every clean handoff would be misclassified as
+// a cap-hit, breaking the SDLC multi-phase pattern.
+func TestReconcileSessionBeads_DrainAckCleanHandoffSuppressesAssignedWorkEvent(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
+	env.addDesired("worker", "worker", true)
+	fake := events.NewFake()
+	env.rec = fake
+
+	session := env.createSessionBead("worker", "worker")
+	env.markSessionActive(&session)
+
+	// Phase-end handoff shape: bead exists but assignee is already nulled
+	// before drain-ack. Status open / re-routed for the next phase.
+	if _, err := env.store.Create(beads.Bead{
+		Title:  "next phase work",
+		Type:   "task",
+		Status: "open",
+		// Assignee intentionally empty — worker handed off before draining.
+		Metadata: map[string]string{"gc.routed_to": "tester"},
+	}); err != nil {
+		t.Fatalf("Create(handed-off bead): %v", err)
+	}
+
+	dops := newFakeDrainOps()
+	if err := dops.setDrainAck("worker"); err != nil {
+		t.Fatalf("setDrainAck: %v", err)
+	}
+
+	_ = reconcileSessionBeads(
+		context.Background(),
+		[]beads.Bead{session},
+		env.desiredState,
+		map[string]bool{"worker": true},
+		env.cfg,
+		env.sp,
+		env.store,
+		dops,
+		nil,
+		nil,
+		env.dt,
+		nil,
+		false,
+		nil,
+		"",
+		nil,
+		env.clk,
+		env.rec,
+		0,
+		0,
+		&env.stdout,
+		&env.stderr,
+	)
+
+	for _, ev := range fake.Events {
+		if ev.Type == events.SessionDrainAckedWithAssignedWork {
+			t.Fatalf("unexpected %s event on clean handoff path: %+v", events.SessionDrainAckedWithAssignedWork, ev)
+		}
+	}
+}
+
 func TestReconcileSessionBeads_UndesiredDrainAckStopsAndCloses(t *testing.T) {
 	env := newReconcilerTestEnv()
 	session := env.createSessionBead("worker", "worker")
@@ -2524,6 +2679,159 @@ func TestReconcileSessionBeads_NoDriftWhenHashMatches(t *testing.T) {
 	}
 }
 
+// TestReconcilerSilentRebaselineOnLegacyHash enforces ga-s760.1 FR-1, FR-3:
+// when a session's stored core hash carries no version prefix (a session
+// started by a binary released before fingerprint versioning), the
+// reconciler must silently overwrite all four hash/breakdown metadata
+// fields with current versioned values. No drain, no SessionDraining
+// event.
+func TestReconcilerSilentRebaselineOnLegacyHash(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
+	env.addDesired("worker", "worker", true)
+	rec := events.NewFake()
+	env.rec = rec
+	session := env.createSessionBead("worker", "worker")
+	env.markSessionActive(&session)
+
+	// Legacy bare-hex values as written by the pre-versioning binary.
+	legacyCore := strings.Repeat("a", 64)
+	legacyLive := strings.Repeat("b", 64)
+	env.setSessionMetadata(&session, map[string]string{
+		"started_config_hash": legacyCore,
+		"started_live_hash":   legacyLive,
+		"live_hash":           legacyLive,
+		"core_hash_breakdown": `{"Command":"legacy","Env":"legacy"}`,
+	})
+
+	env.reconcile([]beads.Bead{session})
+
+	if ds := env.dt.get(session.ID); ds != nil {
+		t.Fatalf("expected no drain on legacy hash silent rebaseline, got %+v; stderr=%s", ds, env.stderr.String())
+	}
+	for _, e := range rec.Events {
+		if e.Type == events.SessionDraining {
+			t.Errorf("unexpected SessionDraining event recorded for silent rebaseline: %+v", e)
+		}
+	}
+
+	got, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatalf("Get session: %v", err)
+	}
+	expectedCore := runtime.CoreFingerprint(runtime.Config{Command: "test-cmd"})
+	expectedLive := runtime.LiveFingerprint(runtime.Config{Command: "test-cmd"})
+	if got.Metadata["started_config_hash"] != expectedCore {
+		t.Errorf("started_config_hash = %q, want rebaseline to %q", got.Metadata["started_config_hash"], expectedCore)
+	}
+	if got.Metadata["started_live_hash"] != expectedLive {
+		t.Errorf("started_live_hash = %q, want rebaseline to %q", got.Metadata["started_live_hash"], expectedLive)
+	}
+	if got.Metadata["live_hash"] != expectedLive {
+		t.Errorf("live_hash = %q, want rebaseline to %q", got.Metadata["live_hash"], expectedLive)
+	}
+	if got.Metadata["core_hash_breakdown"] == `{"Command":"legacy","Env":"legacy"}` {
+		t.Errorf("core_hash_breakdown was not rebaselined, still: %q", got.Metadata["core_hash_breakdown"])
+	}
+	if got.Metadata["core_hash_breakdown"] == "" {
+		t.Errorf("core_hash_breakdown was cleared but should be rebaselined to current breakdown")
+	}
+}
+
+// TestReconcilerSilentRebaselineOnVersionMismatch enforces ga-s760.1 FR-2,
+// FR-3: when a session's stored core hash carries a version prefix from a
+// different binary (e.g., v0:), the reconciler must silently rebaseline
+// all four hash/breakdown fields. No drain, no SessionDraining event.
+func TestReconcilerSilentRebaselineOnVersionMismatch(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
+	env.addDesired("worker", "worker", true)
+	rec := events.NewFake()
+	env.rec = rec
+	session := env.createSessionBead("worker", "worker")
+	env.markSessionActive(&session)
+
+	// Version-mismatched stored hashes (v0: prefix is from an older binary).
+	mismatchCore := "v0:" + strings.Repeat("a", 64)
+	mismatchLive := "v0:" + strings.Repeat("b", 64)
+	env.setSessionMetadata(&session, map[string]string{
+		"started_config_hash": mismatchCore,
+		"started_live_hash":   mismatchLive,
+		"live_hash":           mismatchLive,
+		"core_hash_breakdown": `{"version":"v0","fields":{"Command":"old"}}`,
+	})
+
+	env.reconcile([]beads.Bead{session})
+
+	if ds := env.dt.get(session.ID); ds != nil {
+		t.Fatalf("expected no drain on version-mismatch silent rebaseline, got %+v; stderr=%s", ds, env.stderr.String())
+	}
+	for _, e := range rec.Events {
+		if e.Type == events.SessionDraining {
+			t.Errorf("unexpected SessionDraining event recorded for silent rebaseline: %+v", e)
+		}
+	}
+
+	got, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatalf("Get session: %v", err)
+	}
+	expectedCore := runtime.CoreFingerprint(runtime.Config{Command: "test-cmd"})
+	expectedLive := runtime.LiveFingerprint(runtime.Config{Command: "test-cmd"})
+	if got.Metadata["started_config_hash"] != expectedCore {
+		t.Errorf("started_config_hash = %q, want rebaseline to %q", got.Metadata["started_config_hash"], expectedCore)
+	}
+	if got.Metadata["started_live_hash"] != expectedLive {
+		t.Errorf("started_live_hash = %q, want rebaseline to %q", got.Metadata["started_live_hash"], expectedLive)
+	}
+	if got.Metadata["live_hash"] != expectedLive {
+		t.Errorf("live_hash = %q, want rebaseline to %q", got.Metadata["live_hash"], expectedLive)
+	}
+	if got.Metadata["core_hash_breakdown"] == `{"version":"v0","fields":{"Command":"old"}}` {
+		t.Errorf("core_hash_breakdown was not rebaselined, still: %q", got.Metadata["core_hash_breakdown"])
+	}
+	if got.Metadata["core_hash_breakdown"] == "" {
+		t.Errorf("core_hash_breakdown was cleared but should be rebaselined to current breakdown")
+	}
+}
+
+// TestReconcilerStillDrainsOnSameVersionRealDrift enforces ga-s760.1 FR-4:
+// the silent rebaseline path must NOT swallow real drift. When stored and
+// current hashes share the current version prefix but differ in the hex
+// tail, the reconciler still drains the session. This is the regression
+// guard against the rebaseline branch over-applying.
+func TestReconcilerStillDrainsOnSameVersionRealDrift(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
+	// Desired state has a different command than the bead.
+	env.addRunningWorkerDesiredWithNewConfig()
+	session := env.createSessionBead("worker", "worker")
+	env.markSessionActive(&session)
+	// Stored hash carries the current version prefix but a fabricated hex
+	// that differs from whatever the desired-state config currently hashes
+	// to. The shared prefix means the version gate sees same-version, so
+	// the drift handling proceeds to compare the hex tails and drain.
+	storedCore := runtime.FingerprintVersion + ":" + strings.Repeat("c", 64)
+	env.setSessionMetadata(&session, map[string]string{
+		"started_config_hash": storedCore,
+	})
+
+	currentHash := runtime.CoreFingerprint(runtime.Config{Command: "new-cmd"})
+	if storedCore == currentHash {
+		t.Fatalf("test setup: stored hash %q should differ from current %q", storedCore, currentHash)
+	}
+
+	env.reconcile([]beads.Bead{session})
+
+	ds := env.dt.get(session.ID)
+	if ds == nil {
+		t.Fatalf("expected drain to be initiated for same-version real drift (session.ID=%q, stderr=%s)", session.ID, env.stderr.String())
+	}
+	if ds.reason != "config-drift" {
+		t.Errorf("drain reason = %q, want %q", ds.reason, "config-drift")
+	}
+}
+
 // Regression test for #127: a freshly created session can be drained for
 // config-drift shortly after wake because the reconciler's drift check runs
 // before started_config_hash is written. The fix skips drift detection until
@@ -3146,6 +3454,30 @@ func TestReconcileSessionBeads_SuspendedNotRunningClosed(t *testing.T) {
 	}
 	if b.Metadata["state"] != "suspended" {
 		t.Errorf("state = %q, want %q", b.Metadata["state"], "suspended")
+	}
+}
+
+// TestReconcileSessionBeads_FailedCreateNotDesiredClosed verifies that a bead
+// in the failed-create state is recognized by the reconciler (not skipped as
+// unknown) and closed when it is not in the desired set and not running.
+// Regression: previously failed-create was missing from knownSessionStates,
+// so dead pool beads blocked slots forever.
+func TestReconcileSessionBeads_FailedCreateNotDesiredClosed(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{Agents: []config.Agent{{Name: "polecat", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(5)}}}
+	session := env.createSessionBead("polecat", "polecat-ga-mg0")
+	session.Metadata["state"] = "failed-create"
+	session.Metadata["pool_managed"] = "true"
+	session.Metadata["pool_slot"] = "1"
+
+	env.reconcile([]beads.Bead{session})
+
+	b, _ := env.store.Get(session.ID)
+	if b.Status != "closed" {
+		t.Errorf("failed-create bead status = %q, want closed", b.Status)
+	}
+	if want := sessionpkg.CanonicalCloseReason(string(sessionpkg.StateFailedCreate)); b.Metadata["close_reason"] != want {
+		t.Errorf("close_reason = %q, want %q", b.Metadata["close_reason"], want)
 	}
 }
 
@@ -4228,6 +4560,69 @@ func TestPendingCreateLeaseExpiredForRollbackFallsBackToStaleWindowForInvalidLas
 	stale.CreatedAt = clk.Now().Add(-(staleCreatingStateTimeout + time.Second))
 	if !pendingCreateLeaseExpiredForRollback(stale, clk, time.Minute) {
 		t.Fatal("invalid last_woke_at preserved after stale window; want rollback")
+	}
+}
+
+func TestTraceHealClearedPendingCreateLeaseRecordsDecision(t *testing.T) {
+	trace := &sessionReconcilerTraceCycle{
+		tracer: &SessionReconcilerTracer{
+			detail: map[string]TraceSource{"helper": TraceSourceManual},
+		},
+		dropReasons:       map[string]int{},
+		pendingDetail:     map[string][]SessionReconcilerTraceRecord{},
+		pendingDropped:    map[string]int{},
+		templatesTouched:  map[string]struct{}{},
+		detailedTemplates: map[string]struct{}{},
+		decisionCounts:    map[string]int{},
+		operationCounts:   map[string]int{},
+		mutationCounts:    map[string]int{},
+		reasonCounts:      map[string]int{},
+		outcomeCounts:     map[string]int{},
+	}
+	session := makeBead("b1", map[string]string{
+		"session_name": "helper",
+		"state":        "asleep",
+		"template":     "helper",
+	})
+
+	traceHealClearedPendingCreateLease(
+		trace,
+		session,
+		&config.City{Agents: []config.Agent{{Name: "helper"}}},
+		"",
+		"",
+		"creating",
+		"2026-05-19T08:58:30Z",
+		"2026-05-19T08:58:30Z",
+		false,
+		map[string]string{
+			"pending_create_claim":      "",
+			"pending_create_started_at": "",
+			"state":                     "asleep",
+		},
+	)
+
+	if len(trace.records) != 1 {
+		t.Fatalf("trace records = %d, want 1", len(trace.records))
+	}
+	rec := trace.records[0]
+	if rec.RecordType != TraceRecordDecision {
+		t.Fatalf("record type = %q, want decision", rec.RecordType)
+	}
+	if rec.SiteCode != TraceSiteReconcilerPendingCreate {
+		t.Fatalf("site = %q, want %q", rec.SiteCode, TraceSiteReconcilerPendingCreate)
+	}
+	if rec.OutcomeCode != TraceOutcomeApplied {
+		t.Fatalf("outcome = %q, want %q", rec.OutcomeCode, TraceOutcomeApplied)
+	}
+	if got := rec.Fields["raw_reason_code"]; got != "heal_cleared_stale_lease" {
+		t.Fatalf("raw_reason_code = %#v, want heal_cleared_stale_lease", got)
+	}
+	if got := rec.Fields["state_before"]; got != "creating" {
+		t.Fatalf("state_before = %#v, want creating", got)
+	}
+	if got := rec.Fields["state_after"]; got != "asleep" {
+		t.Fatalf("state_after = %#v, want asleep", got)
 	}
 }
 
