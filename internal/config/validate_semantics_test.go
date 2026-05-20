@@ -248,3 +248,102 @@ func TestValidateAgentsPromptFlagWithFlagModeOK(t *testing.T) {
 		t.Errorf("should be valid: %v", err)
 	}
 }
+
+func TestValidateSemanticsAmbiguityGateNegativeThresholdsWarn(t *testing.T) {
+	cfg := &City{
+		Workspace: Workspace{Provider: "claude"},
+		Agents: []Agent{{
+			Name:     "builder",
+			Provider: "claude",
+			AmbiguityGate: &AmbiguityGate{
+				IntakeThreshold:       -1,
+				PlanningAssumptionCap: -2,
+			},
+		}},
+	}
+	warnings := ValidateSemantics(cfg, "city.toml")
+	intakeWarn, planWarn := false, false
+	for _, w := range warnings {
+		if strings.Contains(w, "ambiguity_gate.intake_threshold must be >= 0") {
+			intakeWarn = true
+		}
+		if strings.Contains(w, "ambiguity_gate.planning_assumption_cap must be >= 0") {
+			planWarn = true
+		}
+	}
+	if !intakeWarn {
+		t.Errorf("missing intake-negative warning; got: %v", warnings)
+	}
+	if !planWarn {
+		t.Errorf("missing planning-cap-negative warning; got: %v", warnings)
+	}
+}
+
+func TestValidateSemanticsAmbiguityGateInertConfigWarns(t *testing.T) {
+	cfg := &City{
+		Workspace: Workspace{Provider: "claude"},
+		Agents: []Agent{{
+			Name:     "builder",
+			Provider: "claude",
+			// Supporting data set but no threshold opts the agent in —
+			// the gate will not fire, so the supporting fields are inert.
+			AmbiguityGate: &AmbiguityGate{
+				PlanningHighStakes: []string{"data shape"},
+				KnownAreas:         []string{"manager"},
+				BounceLogPath:      ".runtime/builder/bounces.jsonl",
+			},
+		}},
+	}
+	warnings := ValidateSemantics(cfg, "city.toml")
+	got := false
+	for _, w := range warnings {
+		if strings.Contains(w, "the gate will not fire until a threshold opts the agent in") {
+			got = true
+			break
+		}
+	}
+	if !got {
+		t.Errorf("expected inert-config warning; got: %v", warnings)
+	}
+}
+
+func TestValidateSemanticsAmbiguityGateEnabledClean(t *testing.T) {
+	cfg := &City{
+		Workspace: Workspace{Provider: "claude"},
+		Agents: []Agent{{
+			Name:     "builder",
+			Provider: "claude",
+			AmbiguityGate: &AmbiguityGate{
+				IntakeThreshold:       5,
+				PlanningAssumptionCap: 3,
+				PlanningHighStakes:    []string{"data shape"},
+				KnownAreas:            []string{"manager"},
+				BounceLogPath:         ".runtime/builder/bounces.jsonl",
+			},
+		}},
+	}
+	warnings := ValidateSemantics(cfg, "city.toml")
+	for _, w := range warnings {
+		if strings.Contains(w, "ambiguity_gate") {
+			t.Errorf("clean config should produce no ambiguity_gate warnings, got: %s", w)
+		}
+	}
+}
+
+func TestValidateSemanticsAmbiguityGateDisabledClean(t *testing.T) {
+	// The empty / disabled case must stay quiet — this is the back-compat
+	// path for every config that pre-dates the spec.
+	cfg := &City{
+		Workspace: Workspace{Provider: "claude"},
+		Agents: []Agent{{
+			Name:     "builder",
+			Provider: "claude",
+		}},
+	}
+	warnings := ValidateSemantics(cfg, "city.toml")
+	for _, w := range warnings {
+		if strings.Contains(w, "ambiguity_gate") {
+			t.Errorf("disabled (zero) config should produce no ambiguity_gate warnings, got: %s", w)
+		}
+	}
+}

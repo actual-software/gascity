@@ -1369,6 +1369,18 @@ func loadPackWithCacheOptionsLocked(fs fsys.FS, topoPath, topoDir, cityRoot, rig
 			agents[i].OverlayDir = adjustFragmentPath(
 				agents[i].OverlayDir, topoDir, cityRoot)
 		}
+		// Merge pack-level [pack.ambiguity_gate] defaults into this
+		// agent's [agent.ambiguity_gate] block. Agent-level non-zero
+		// values win on collision; pack-level fills in fields the
+		// agent left at the zero value. Included packs' agents already
+		// had their own pack's merge applied during recursive
+		// loadPackWithCacheOptionsLocked, so we only touch this pack's
+		// own [[agent]] block here. Skip when both scopes are nil so
+		// we do not synthesize a stub block on agents that never opted
+		// in (back-compat).
+		if tc.Pack.AmbiguityGate != nil || agents[i].AmbiguityGate != nil {
+			agents[i].AmbiguityGate = MergeAmbiguityGate(tc.Pack.AmbiguityGate, agents[i].AmbiguityGate)
+		}
 	}
 	namedSessions := make([]NamedSession, len(tc.NamedSessions))
 	copy(namedSessions, tc.NamedSessions)
@@ -2373,6 +2385,12 @@ func applyAgentOverride(a *Agent, ov *AgentOverride) {
 	}
 	if ov.MaxSessionAgeJitter != nil {
 		a.MaxSessionAgeJitter = *ov.MaxSessionAgeJitter
+	}
+	if ov.AmbiguityGate != nil {
+		clone := *ov.AmbiguityGate
+		clone.PlanningHighStakes = append([]string(nil), ov.AmbiguityGate.PlanningHighStakes...)
+		clone.KnownAreas = append([]string(nil), ov.AmbiguityGate.KnownAreas...)
+		a.AmbiguityGate = &clone
 	}
 	if ov.SleepAfterIdle != nil {
 		a.SleepAfterIdle = NormalizeSleepAfterIdle(*ov.SleepAfterIdle)

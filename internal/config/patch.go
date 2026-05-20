@@ -53,6 +53,10 @@ type AgentPatch struct {
 	MaxSessionAge *string `toml:"max_session_age,omitempty"`
 	// MaxSessionAgeJitter overrides the max session age jitter. Duration string (e.g., "15m").
 	MaxSessionAgeJitter *string `toml:"max_session_age_jitter,omitempty"`
+	// AmbiguityGate overrides the agent's ambiguity_gate config. When set,
+	// the patch replaces the agent's block in full (no field-by-field
+	// merge) — matching how other struct-typed agent fields are patched.
+	AmbiguityGate *AmbiguityGate `toml:"ambiguity_gate,omitempty"`
 	// SleepAfterIdle overrides idle sleep policy for this agent. Accepts a
 	// duration string or "off".
 	SleepAfterIdle *string `toml:"sleep_after_idle,omitempty"`
@@ -332,6 +336,12 @@ func applyAgentPatchFields(a *Agent, p *AgentPatch) {
 	}
 	if p.MaxSessionAgeJitter != nil {
 		a.MaxSessionAgeJitter = *p.MaxSessionAgeJitter
+	}
+	if p.AmbiguityGate != nil {
+		clone := *p.AmbiguityGate
+		clone.PlanningHighStakes = append([]string(nil), p.AmbiguityGate.PlanningHighStakes...)
+		clone.KnownAreas = append([]string(nil), p.AmbiguityGate.KnownAreas...)
+		a.AmbiguityGate = &clone
 	}
 	if p.SleepAfterIdle != nil {
 		a.SleepAfterIdle = NormalizeSleepAfterIdle(*p.SleepAfterIdle)

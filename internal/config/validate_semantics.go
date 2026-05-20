@@ -71,6 +71,40 @@ func ValidateSemantics(cfg *City, source string) []string {
 		}
 	}
 
+	// Check per-agent ambiguity_gate config. The merge between
+	// [pack.ambiguity_gate] and [agent.ambiguity_gate] runs during pack
+	// expansion (see MergeAmbiguityGate), so by the time validation
+	// reads cfg.Agents the agent struct already carries the resolved
+	// values. Nil means neither scope declared a block — the gate is
+	// genuinely disabled and there is nothing to warn about. Mirrors
+	// the fm-inri1 compaction.* validation rules.
+	for _, a := range cfg.Agents {
+		if a.AmbiguityGate == nil {
+			continue
+		}
+		g := a.AmbiguityGate
+		if g.IntakeThreshold < 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s: agent %q: ambiguity_gate.intake_threshold must be >= 0, got %d (treating as disabled)",
+				source, a.QualifiedName(), g.IntakeThreshold))
+		}
+		if g.PlanningAssumptionCap < 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s: agent %q: ambiguity_gate.planning_assumption_cap must be >= 0, got %d (treating as disabled)",
+				source, a.QualifiedName(), g.PlanningAssumptionCap))
+		}
+		// Surface configurations that supply gate-input data with no
+		// gate to evaluate it. Lists are inert until at least one
+		// threshold opts the agent in. Treat as a warning, not an
+		// error, so a config can pre-seed the dictionary in
+		// anticipation of a later opt-in.
+		if !g.Enabled() && (len(g.PlanningHighStakes) > 0 || len(g.KnownAreas) > 0 || g.BounceLogPath != "") {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s: agent %q: ambiguity_gate has supporting fields set (high-stakes, known-areas, or bounce_log_path) but neither intake_threshold nor planning_assumption_cap is positive — the gate will not fire until a threshold opts the agent in",
+				source, a.QualifiedName()))
+		}
+	}
+
 	// Custom provider names must not contain the reserved ":" character
 	// (used by the base = "builtin:..." / "provider:..." namespace prefixes).
 	for name := range cfg.Providers {

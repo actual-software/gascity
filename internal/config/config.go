@@ -557,6 +557,13 @@ type AgentOverride struct {
 	// MaxSessionAgeJitter overrides the jitter added on top of MaxSessionAge.
 	// Duration string (e.g., "15m"). Empty disables jitter.
 	MaxSessionAgeJitter *string `toml:"max_session_age_jitter,omitempty"`
+	// AmbiguityGate overrides the agent's ambiguity_gate config. When set,
+	// the override replaces the agent's block in full (no field-by-field
+	// merge) — matching how other struct-typed agent fields are patched.
+	// Pack-level pack.ambiguity_gate defaults still flow in for any
+	// fields the override left at the zero value when the override is
+	// applied during pack expansion.
+	AmbiguityGate *AmbiguityGate `toml:"ambiguity_gate,omitempty"`
 	// SleepAfterIdle overrides idle sleep policy for this agent. Accepts a
 	// duration string (e.g., "30s") or "off".
 	SleepAfterIdle *string `toml:"sleep_after_idle,omitempty"`
@@ -695,6 +702,18 @@ type PackMeta struct {
 	// for this pack's formulas/orders to function. Validated
 	// after all packs are expanded.
 	Requires []PackRequirement `toml:"requires,omitempty"`
+	// AmbiguityGate declares pack-wide defaults for the factory intake/
+	// planning ambiguity gates. Agents in this pack that omit an
+	// [agent.ambiguity_gate] block inherit these values; agents that
+	// declare their own block win on per-field collisions but inherit
+	// any field they left at the zero value. See AmbiguityGate's
+	// docstring for the surface and MergeAmbiguityGate for the merge.
+	// Pointer so the block is genuinely absent in marshalled output
+	// when the operator did not declare one — the BurntSushi/toml
+	// encoder's omitempty considers a struct containing slices to be
+	// "non-empty" if any scalar field is zero, which would otherwise
+	// emit a stub block on every clean config.
+	AmbiguityGate *AmbiguityGate `toml:"ambiguity_gate,omitempty"`
 }
 
 // ImportIsTransitive returns whether an Import should resolve
@@ -1725,6 +1744,114 @@ func normalizeAgentDefaultsAlias(cfg *City, meta toml.MetaData) {
 	}
 }
 
+// AmbiguityGate is the per-agent (and per-pack) configuration for the
+// factory intake/planning ambiguity gates described in the local-core
+// ambiguity-gate.md spec (fm-l6t2q). The zero value disables every gate —
+// no field is set, so neither IntakeEnabled() nor PlanningEnabled() is
+// true and the controller skips both pre-flight scoring and the builder's
+// planning gate. This preserves back-compat: configs that do not declare
+// the block see no behavior change.
+//
+// The block may be declared at two scopes in pack.toml — [pack.ambiguity_gate]
+// for pack-wide defaults, and [agent.ambiguity_gate] inside an [[agent]]
+// block for agent-specific overrides. Agent-level values win on collision;
+// pack-level values fill in any fields the agent left at the zero value.
+// MergeAmbiguityGate implements that merge.
+type AmbiguityGate struct {
+	// IntakeThreshold is the controller-side scorer threshold. A bead whose
+	// ambiguity-score/v1 sum is >= this value is bounced before a builder
+	// is spawned. Zero disables only the intake gate (planning may still
+	// fire). The convention for an explicit "off" while keeping the rest
+	// of the config in place is IntakeThreshold = 999 (no bead is expected
+	// to score that high under the v1 rule set).
+	IntakeThreshold int `toml:"intake_threshold,omitempty"`
+	// PlanningAssumptionCap is the maximum number of entries the builder's
+	// first-turn "Assumptions:" list may contain before the planning gate
+	// bounces. Zero disables the planning gate.
+	PlanningAssumptionCap int `toml:"planning_assumption_cap,omitempty"`
+	// PlanningHighStakes is the per-pool list of assumption tags that
+	// trigger an immediate planning bounce regardless of count
+	// (e.g. "data shape", "security model"). Empty falls back to the
+	// pack-level value during merge; if still empty after merge, the
+	// high-stakes check is inert.
+	PlanningHighStakes []string `toml:"planning_high_stakes,omitempty"`
+	// KnownAreas is the per-pool keyword dictionary that satisfies the
+	// intake gate's no_repo_or_area check (e.g. "manager", "builder",
+	// "slack.py"). Empty falls back to the pack-level value during merge.
+	KnownAreas []string `toml:"known_areas,omitempty"`
+	// BounceLogPath is the flat audit log location for bounce events.
+	// Empty resolves to the documented default (.runtime/<agent>/bounces.jsonl)
+	// at the controller's runtime layer; this struct intentionally does not
+	// expand the <agent> placeholder so the configured path stays portable
+	// across agent names.
+	BounceLogPath string `toml:"bounce_log_path,omitempty"`
+}
+
+// IntakeEnabled reports whether the controller-side intake gate should
+// run for this agent. False when IntakeThreshold is zero (the safe
+// default — no bounce without explicit opt-in).
+func (a AmbiguityGate) IntakeEnabled() bool {
+	return a.IntakeThreshold > 0
+}
+
+// PlanningEnabled reports whether the builder's first-turn planning gate
+// should fire. False when PlanningAssumptionCap is zero (the safe default).
+func (a AmbiguityGate) PlanningEnabled() bool {
+	return a.PlanningAssumptionCap > 0
+}
+
+// Enabled reports whether either gate is opted in.
+func (a AmbiguityGate) Enabled() bool {
+	return a.IntakeEnabled() || a.PlanningEnabled()
+}
+
+// MergeAmbiguityGate folds the pack-level defaults into the agent-level
+// configuration using the contract "agent-level wins on collision; pack
+// fills in fields the agent left at the zero value". Slices are deep-copied
+// so the merged result does not share backing arrays with either input.
+//
+// Pointer semantics:
+//   - both nil  -> nil   (gate disabled — back-compat)
+//   - pack nil  -> a copy of agent
+//   - agent nil -> a copy of pack
+//   - both set  -> field-by-field merge, agent wins on non-zero
+//
+// The merge is intentionally one-directional (pack -> agent). The
+// inverse case — an agent leaks defaults into a different pack — is
+// prevented by callers always invoking this with the agent's own pack
+// as the pack argument.
+func MergeAmbiguityGate(pack, agent *AmbiguityGate) *AmbiguityGate {
+	if pack == nil && agent == nil {
+		return nil
+	}
+	out := AmbiguityGate{}
+	if agent != nil {
+		out.IntakeThreshold = agent.IntakeThreshold
+		out.PlanningAssumptionCap = agent.PlanningAssumptionCap
+		out.PlanningHighStakes = append([]string(nil), agent.PlanningHighStakes...)
+		out.KnownAreas = append([]string(nil), agent.KnownAreas...)
+		out.BounceLogPath = agent.BounceLogPath
+	}
+	if pack != nil {
+		if out.IntakeThreshold == 0 {
+			out.IntakeThreshold = pack.IntakeThreshold
+		}
+		if out.PlanningAssumptionCap == 0 {
+			out.PlanningAssumptionCap = pack.PlanningAssumptionCap
+		}
+		if len(out.PlanningHighStakes) == 0 {
+			out.PlanningHighStakes = append([]string(nil), pack.PlanningHighStakes...)
+		}
+		if len(out.KnownAreas) == 0 {
+			out.KnownAreas = append([]string(nil), pack.KnownAreas...)
+		}
+		if out.BounceLogPath == "" {
+			out.BounceLogPath = pack.BounceLogPath
+		}
+	}
+	return &out
+}
+
 // Agent defines a configured agent in the city.
 type Agent struct {
 	// Name is the unique identifier for this agent.
@@ -1869,6 +1996,14 @@ type Agent struct {
 	// disables jitter (every session restarts at exactly MaxSessionAge).
 	// Ignored when MaxSessionAge is unset.
 	MaxSessionAgeJitter string `toml:"max_session_age_jitter,omitempty"`
+	// AmbiguityGate declares the factory intake/planning ambiguity gate
+	// configuration for this agent. Nil means the gate is disabled
+	// (back-compat: no behavior change vs. today). Pack-level defaults
+	// from pack.ambiguity_gate flow in during pack expansion for any
+	// fields the agent left at the zero value. See AmbiguityGate's
+	// docstring for the field surface and the ambiguity-gate.md spec
+	// in packs/local-core/assets/docs for the v1 contract.
+	AmbiguityGate *AmbiguityGate `toml:"ambiguity_gate,omitempty"`
 	// SleepAfterIdle overrides idle sleep policy for this agent. Accepts a
 	// duration string (e.g., "30s") or "off".
 	SleepAfterIdle string `toml:"sleep_after_idle,omitempty"`
