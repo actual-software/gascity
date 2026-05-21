@@ -94,6 +94,10 @@ func (c *ImplicitImportCacheCheck) WarmupEligible() bool { return false }
 
 // WarmupEligible returns false; this check is not part of the
 // `gc start` warm-up scan.
+func (c *InstructionsFileCheck) WarmupEligible() bool { return false }
+
+// WarmupEligible returns false; this check is not part of the
+// `gc start` warm-up scan.
 func (c *NestedWorktreePruneCheck) WarmupEligible() bool { return false }
 
 // WarmupEligible returns false; this check is not part of the
