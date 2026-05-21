@@ -452,7 +452,7 @@ func TestDoRuntimeDrainAck(t *testing.T) {
 	if !dops.acked["worker"] {
 		t.Error("drain ack flag not set")
 	}
-	if got := stdout.String(); got != "Drain acknowledged. Controller will stop this session.\n" {
+	if got := stdout.String(); got != "Drain acknowledged. Controller will stop this runtime on its next tick.\n" {
 		t.Errorf("stdout = %q", got)
 	}
 }

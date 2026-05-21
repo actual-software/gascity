@@ -2452,7 +2452,7 @@ gc runtime
 | Subcommand | Description |
 |------------|-------------|
 | [gc runtime drain](#gc-runtime-drain) | Signal a session to drain (wind down gracefully) |
-| [gc runtime drain-ack](#gc-runtime-drain-ack) | Acknowledge drain — signal the controller to stop this session |
+| [gc runtime drain-ack](#gc-runtime-drain-ack) | Acknowledge drain — signal the controller to stop this runtime |
 | [gc runtime drain-check](#gc-runtime-drain-check) | Check if a session is draining (exit 0 = draining) |
 | [gc runtime request-restart](#gc-runtime-request-restart) | Request controller restart this session (waits to be killed) |
 | [gc runtime undrain](#gc-runtime-undrain) | Cancel drain on a session |
@@ -2476,10 +2476,14 @@ gc runtime drain <name> [flags]
 
 ## gc runtime drain-ack
 
-Acknowledge a drain signal — tell the controller to stop this session.
+Acknowledge a drain signal — tell the controller to stop this runtime.
 
 Sets GC_DRAIN_ACK metadata on the session. The controller will stop
-the session on its next reconcile tick. Call this after the session has
+the current runtime (e.g. the tmux pane and its child process) on its
+next reconcile tick. The session bead persists in state=drained (or
+state=asleep+idle when work is still assigned) and may re-wake on
+future routing; if the session is no longer in the desired set, the
+reconciler closes the bead instead. Call this after the session has
 finished its current work in response to a drain signal.
 
 ```

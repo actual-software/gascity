@@ -414,11 +414,15 @@ func newRuntimeDrainAckCmd(stdout, stderr io.Writer) *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "drain-ack [name]",
-		Short: "Acknowledge drain — signal the controller to stop this session",
-		Long: `Acknowledge a drain signal — tell the controller to stop this session.
+		Short: "Acknowledge drain — signal the controller to stop this runtime",
+		Long: `Acknowledge a drain signal — tell the controller to stop this runtime.
 
 Sets GC_DRAIN_ACK metadata on the session. The controller will stop
-the session on its next reconcile tick. Call this after the session has
+the current runtime (e.g. the tmux pane and its child process) on its
+next reconcile tick. The session bead persists in state=drained (or
+state=asleep+idle when work is still assigned) and may re-wake on
+future routing; if the session is no longer in the desired set, the
+reconciler closes the bead instead. Call this after the session has
 finished its current work in response to a drain signal.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -645,6 +649,6 @@ func doRuntimeDrainAck(dops drainOps, targetName, sn string, jsonOutput bool, st
 		}
 		return 0
 	}
-	fmt.Fprintln(stdout, "Drain acknowledged. Controller will stop this session.") //nolint:errcheck // best-effort stdout
+	fmt.Fprintln(stdout, "Drain acknowledged. Controller will stop this runtime on its next tick.") //nolint:errcheck // best-effort stdout
 	return 0
 }
