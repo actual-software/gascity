@@ -639,6 +639,7 @@ gc converge list [flags]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--all` | bool |  | Include closed/terminated loops |
+| `--all-rigs` | bool |  | List loops from city/HQ and every bound rig |
 | `--json` | bool |  | Output as JSON |
 | `--state` | string |  | Filter by state (active, waiting_manual, terminated) |
 
@@ -1494,8 +1495,12 @@ Show total and unread message counts for a session alias or human.
 The recipient defaults to $GC_SESSION_ID, $GC_ALIAS, $GC_AGENT, or "human".
 
 ```
-gc mail count [session]
+gc mail count [session] [flags]
 ```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | bool |  | emit JSON result |
 
 ## gc mail delete
 
@@ -1515,8 +1520,12 @@ Shows message ID, sender, subject, and body in a table. The recipient defaults
 to $GC_SESSION_ID, $GC_ALIAS, $GC_AGENT, or "human". Pass a session alias to view another inbox.
 
 ```
-gc mail inbox [session]
+gc mail inbox [session] [flags]
 ```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | bool |  | emit JSON result |
 
 ## gc mail mark-read
 
@@ -1542,8 +1551,12 @@ Same output as "gc mail read" but does not change the message's read status.
 The message will continue to appear in inbox results.
 
 ```
-gc mail peek <id>
+gc mail peek <id> [flags]
 ```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | bool |  | emit JSON result |
 
 ## gc mail read
 
@@ -1553,8 +1566,12 @@ Shows the full message details (ID, sender, recipient, subject, date, body).
 The message stays in the store — use "gc mail archive" to permanently close it.
 
 ```
-gc mail read <id>
+gc mail read <id> [flags]
 ```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | bool |  | emit JSON result |
 
 ## gc mail reply
 
@@ -1615,8 +1632,12 @@ gc mail send mayor "Build is green"
 Show all messages sharing a thread ID or message ID, ordered by time.
 
 ```
-gc mail thread <id>
+gc mail thread <id> [flags]
 ```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | bool |  | emit JSON result |
 
 ## gc mcp
 
@@ -1771,12 +1792,18 @@ Close stale open order-tracking beads.
 This is intended for maintenance exec orders. It only closes tracking beads
 older than --stale-after so a fresh in-flight order is not interrupted.
 
+Use --include-wisps for operator recovery of abandoned order-run wisp
+subtrees whose open descendants are also older than --stale-after. Pass one
+or more scoped order names when --include-wisps is set; wisp recovery is
+order-scoped to avoid scanning unrelated beads.
+
 ```
-gc order sweep-tracking [flags]
+gc order sweep-tracking [order ...] [flags]
 ```
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
+| `--include-wisps` | bool |  | also close stale order-run wisp subtrees with open descendants |
 | `--quiet` | bool |  | suppress success output |
 | `--stale-after` | duration | `10m0s` | minimum age for an open tracking bead to be closed |
 
@@ -3052,7 +3079,7 @@ gc trace show [flags]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--json` | bool | `true` | emit JSON array |
+| `--json` | bool |  | emit JSON result |
 | `--reason` | string |  | filter by reason code |
 | `--since` | string |  | show records since duration ago |
 | `--template` | string |  | exact normalized template selector |
@@ -3080,8 +3107,12 @@ gc trace start [flags]
 Show trace arms and stream state
 
 ```
-gc trace status
+gc trace status [flags]
 ```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | bool |  | emit JSON result |
 
 ## gc trace stop
 
