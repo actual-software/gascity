@@ -11,6 +11,7 @@ set -euo pipefail
 CITY="${GC_CITY:-.}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/dolt-target.sh"
+. "$SCRIPT_DIR/escalation.sh"
 
 # jq is a hard dependency: count_jsonl_rows below relies on it, and a missing
 # jq would silently zero every record count and could mask spikes on a stale
@@ -209,7 +210,10 @@ truncate_push_stderr_for_state() {
 
 # Record a successful push in state so `gc doctor` can surface a timestamp for
 # the archive health check. Clears any stale stderr from previous failures and
-# any prior escalation marker so the next failure-cycle escalates fresh.
+# any prior escalation marker so the next failure-cycle escalates fresh —
+# including the send_escalation_mail dedupe entries for the push-failure
+# subject so the next push-failure cycle escalates without spurious suppression
+# carried over from the resolved one.
 record_archive_push_success() {
     local now
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -223,6 +227,7 @@ record_archive_push_success() {
                  | .last_push_at = $now
                  | del(.last_push_stderr)'
     )"
+    clear_escalation_state "$STATE_FILE" "ESCALATION: JSONL push failed [HIGH]" || true
 }
 
 set_pending_archive_push() {
@@ -406,9 +411,9 @@ send_spike_alert() {
     local delta="$4"
     local threshold="$5"
 
-    gc mail send mayor/ -s "ESCALATION: JSONL spike detected [HIGH]" \
-        -m "Database: $db, prev: $prev_count, current: $current_count, delta: ${delta}%, threshold: ${threshold}%" \
-        2>/dev/null
+    send_escalation_mail "$STATE_FILE" \
+        "ESCALATION: JSONL spike detected [HIGH]" \
+        "Database: $db, prev: $prev_count, current: $current_count, delta: ${delta}%, threshold: ${threshold}%"
 }
 
 retry_pending_spike_alert() {
@@ -529,9 +534,9 @@ Remediation:
 - See docs/getting-started/troubleshooting.md#jsonl-archive-push-failures
 ESCALATION
 )
-            if gc mail send mayor/ -s "ESCALATION: JSONL push failed [HIGH]" \
-                -m "$body" \
-                2>/dev/null; then
+            if send_escalation_mail "$STATE_FILE" \
+                "ESCALATION: JSONL push failed [HIGH]" \
+                "$body"; then
                 mark_push_failure_escalated
             fi
         fi

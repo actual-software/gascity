@@ -11,6 +11,7 @@ set -euo pipefail
 CITY="${GC_CITY_PATH:-${GC_CITY:-.}}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/dolt-target.sh"
+. "$SCRIPT_DIR/escalation.sh"
 CITY_ABS="$(cd "$CITY" 2>/dev/null && pwd -P || printf '%s\n' "$CITY")"
 CITY_BEADS_DIR="$CITY_ABS/.beads"
 
@@ -21,6 +22,14 @@ STALE_ISSUE_AGE="${GC_REAPER_STALE_ISSUE_AGE:-720h}"
 SESSION_PURGE_AGE="${GC_REAPER_SESSION_PURGE_AGE:-720h}"
 ALERT_THRESHOLD="${GC_REAPER_ALERT_THRESHOLD:-500}"
 DRY_RUN="${GC_REAPER_DRY_RUN:-}"
+
+# Dedupe + retention state for ESCALATION mails. send_escalation_mail (in
+# escalation.sh) reads/writes this file; ticks within the cooldown window
+# suppress repeat sends so an unchanging anomaly condition does not flood
+# the mayor inbox.
+PACK_STATE_DIR="${GC_PACK_STATE_DIR:-${GC_CITY_RUNTIME_DIR:-$CITY/.gc/runtime}/packs/maintenance}"
+REAPER_STATE_FILE="$PACK_STATE_DIR/reaper-state.json"
+REAPER_ANOMALY_SUBJECT="ESCALATION: Reaper anomalies detected [MEDIUM]"
 
 # Convert Go durations to SQL INTERVAL hours for Dolt.
 duration_to_hours() {
@@ -550,10 +559,14 @@ if [ "$HAD_DATABASES" -eq 0 ] && [ "$SESSION_PRUNE_ATTEMPTED" -eq 0 ]; then
     exit 0
 fi
 
-# Report.
+# Report. send_escalation_mail handles per-(subject,body) dedupe so an
+# unchanging anomaly condition (e.g. an hq schema gap that persists across
+# many ticks) does not flood the mayor inbox. When anomalies clear we wipe
+# the dedupe state so the next real anomaly escalates fresh.
 if [ -n "$ANOMALIES" ]; then
-    gc mail send mayor/ -s "ESCALATION: Reaper anomalies detected [MEDIUM]" \
-        -m "$ANOMALIES" 2>/dev/null || true
+    send_escalation_mail "$REAPER_STATE_FILE" "$REAPER_ANOMALY_SUBJECT" "$ANOMALIES" || true
+else
+    clear_escalation_state "$REAPER_STATE_FILE" "$REAPER_ANOMALY_SUBJECT" || true
 fi
 
 SUMMARY="reaper — stale_wisps:$TOTAL_STALE_WISPS, closed_wisps:$TOTAL_CLOSED_WISPS, purged:$TOTAL_PURGED, sessions-pruned:$TOTAL_SESSIONS_PRUNED, closed:$TOTAL_ISSUES_CLOSED, skipped_non_city_issues:$TOTAL_STALE_ISSUES_SKIPPED"

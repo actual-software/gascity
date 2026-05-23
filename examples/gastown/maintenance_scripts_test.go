@@ -7335,3 +7335,338 @@ exit 0
 		t.Fatalf("cross-rig-deps summary missing or wrong (subshell counter regression?)\nwant substring: %q\ngot output:\n%s\nbd log:\n%s", want, out, logData)
 	}
 }
+
+// reaperEscalationEnv builds the env map shared by the escalation-dedupe tests.
+// The session-prune anomaly path is the simplest way to drive reaper.sh through
+// the ESCALATION branch: writeMaintenanceBdStub honors BD_PRUNE_COUNT, and any
+// value > 1000 triggers a record_anomaly call.
+func reaperEscalationEnv(cityDir, binDir, stateDir, doltLog, bdLog, gcLog string) map[string]string {
+	return map[string]string{
+		"BD_CALL_LOG":      bdLog,
+		"BD_PRUNE_COUNT":   "1500",
+		"DOLT_ARGS_LOG":    doltLog,
+		"DOLT_DBS":         "beads",
+		"GC_CALL_LOG":      gcLog,
+		"GC_CITY":          cityDir,
+		"GC_CITY_PATH":     cityDir,
+		"GC_DOLT_HOST":     "127.0.0.1",
+		"GC_DOLT_PORT":     "3307",
+		"GC_DOLT_USER":     "root",
+		"GC_DOLT_PASSWORD": "",
+		"GC_PACK_STATE_DIR": stateDir,
+		"PATH":             binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+	}
+}
+
+// countEscalationMails returns the number of ESCALATION lines in the gc log
+// targeting the reaper subject. Existing tests rely on substring matching on a
+// single line, so the same approach generalises here.
+func countEscalationMails(t *testing.T, gcLog, subject string) int {
+	t.Helper()
+	data, err := os.ReadFile(gcLog)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", gcLog, err)
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, "mail send mayor/") && strings.Contains(line, subject) {
+			count++
+		}
+	}
+	return count
+}
+
+func TestReaperEscalationSuppressesRepeatAnomalyWithinCooldown(t *testing.T) {
+	cityDir := t.TempDir()
+	writeCityBeadsMetadata(t, cityDir, "beads")
+	binDir := t.TempDir()
+	stateDir := t.TempDir()
+	doltLog := filepath.Join(t.TempDir(), "dolt-args.log")
+	bdLog := filepath.Join(t.TempDir(), "bd.log")
+	gcLog := filepath.Join(t.TempDir(), "gc.log")
+
+	writeMaintenanceDoltStub(t, filepath.Join(binDir, "dolt"))
+	writeMaintenanceBdStub(t, filepath.Join(binDir, "bd"))
+	writeExecutable(t, filepath.Join(binDir, "gc"), `#!/bin/sh
+printf '%s\n' "$*" >> "$GC_CALL_LOG"
+exit 0
+`)
+
+	env := reaperEscalationEnv(cityDir, binDir, stateDir, doltLog, bdLog, gcLog)
+
+	script := filepath.Join(exampleDir(), "packs", "maintenance", "assets", "scripts", "reaper.sh")
+	runScript(t, script, env)
+	runScript(t, script, env)
+
+	subject := "ESCALATION: Reaper anomalies detected [MEDIUM]"
+	if got := countEscalationMails(t, gcLog, subject); got != 1 {
+		t.Fatalf("expected one ESCALATION send across two ticks (dedupe), got %d:\n%s", got, mustReadFile(t, gcLog))
+	}
+
+	stateFile := filepath.Join(stateDir, "reaper-state.json")
+	stateBytes, err := os.ReadFile(stateFile)
+	if err != nil {
+		t.Fatalf("ReadFile(state): %v", err)
+	}
+	var state struct {
+		Escalations map[string]struct {
+			Subject         string `json:"subject"`
+			LastSentAt      string `json:"last_sent_at"`
+			SuppressedCount int    `json:"suppressed_count"`
+		} `json:"escalations"`
+	}
+	if err := json.Unmarshal(stateBytes, &state); err != nil {
+		t.Fatalf("Unmarshal state: %v\n%s", err, stateBytes)
+	}
+	if len(state.Escalations) != 1 {
+		t.Fatalf("expected exactly one dedupe entry, got %d:\n%s", len(state.Escalations), stateBytes)
+	}
+	var only struct {
+		Subject         string
+		SuppressedCount int
+	}
+	for _, v := range state.Escalations {
+		only.Subject = v.Subject
+		only.SuppressedCount = v.SuppressedCount
+	}
+	if only.Subject != subject {
+		t.Fatalf("dedupe entry subject mismatch: want %q, got %q", subject, only.Subject)
+	}
+	if only.SuppressedCount != 1 {
+		t.Fatalf("expected suppressed_count=1 after one suppressed tick, got %d:\n%s", only.SuppressedCount, stateBytes)
+	}
+}
+
+func TestReaperEscalationClearsStateWhenAnomaliesResolve(t *testing.T) {
+	cityDir := t.TempDir()
+	writeCityBeadsMetadata(t, cityDir, "beads")
+	binDir := t.TempDir()
+	stateDir := t.TempDir()
+	doltLog := filepath.Join(t.TempDir(), "dolt-args.log")
+	bdLog := filepath.Join(t.TempDir(), "bd.log")
+	gcLog := filepath.Join(t.TempDir(), "gc.log")
+
+	writeMaintenanceDoltStub(t, filepath.Join(binDir, "dolt"))
+	writeMaintenanceBdStub(t, filepath.Join(binDir, "bd"))
+	writeExecutable(t, filepath.Join(binDir, "gc"), `#!/bin/sh
+printf '%s\n' "$*" >> "$GC_CALL_LOG"
+exit 0
+`)
+
+	script := filepath.Join(exampleDir(), "packs", "maintenance", "assets", "scripts", "reaper.sh")
+	subject := "ESCALATION: Reaper anomalies detected [MEDIUM]"
+
+	// Tick 1: anomaly present (BD_PRUNE_COUNT=1500 > 1000 threshold). Sends fresh.
+	env1 := reaperEscalationEnv(cityDir, binDir, stateDir, doltLog, bdLog, gcLog)
+	runScript(t, script, env1)
+	if got := countEscalationMails(t, gcLog, subject); got != 1 {
+		t.Fatalf("tick 1 should send a fresh escalation, got %d in log:\n%s", got, mustReadFile(t, gcLog))
+	}
+
+	// Tick 2: no anomaly (BD_PRUNE_COUNT below threshold). clear_escalation_state
+	// must wipe the dedupe entry so the next anomaly escalates fresh.
+	env2 := reaperEscalationEnv(cityDir, binDir, stateDir, doltLog, bdLog, gcLog)
+	env2["BD_PRUNE_COUNT"] = "0"
+	runScript(t, script, env2)
+
+	stateFile := filepath.Join(stateDir, "reaper-state.json")
+	stateBytes, err := os.ReadFile(stateFile)
+	if err != nil {
+		t.Fatalf("ReadFile(state): %v", err)
+	}
+	var stateAfterClear struct {
+		Escalations map[string]any `json:"escalations"`
+	}
+	if err := json.Unmarshal(stateBytes, &stateAfterClear); err != nil {
+		t.Fatalf("Unmarshal: %v\n%s", err, stateBytes)
+	}
+	if len(stateAfterClear.Escalations) != 0 {
+		t.Fatalf("expected escalations to be cleared after no-anomaly tick, got %d entries:\n%s", len(stateAfterClear.Escalations), stateBytes)
+	}
+
+	// Tick 3: anomaly returns. Must escalate fresh (no suppression carried over).
+	env3 := reaperEscalationEnv(cityDir, binDir, stateDir, doltLog, bdLog, gcLog)
+	runScript(t, script, env3)
+	if got := countEscalationMails(t, gcLog, subject); got != 2 {
+		t.Fatalf("expected 2 total escalations after fresh anomaly tick, got %d:\n%s", got, mustReadFile(t, gcLog))
+	}
+}
+
+func TestReaperEscalationLabelsBeadAfterSend(t *testing.T) {
+	cityDir := t.TempDir()
+	writeCityBeadsMetadata(t, cityDir, "beads")
+	binDir := t.TempDir()
+	stateDir := t.TempDir()
+	doltLog := filepath.Join(t.TempDir(), "dolt-args.log")
+	bdLog := filepath.Join(t.TempDir(), "bd.log")
+	gcLog := filepath.Join(t.TempDir(), "gc.log")
+
+	writeMaintenanceDoltStub(t, filepath.Join(binDir, "dolt"))
+	writeMaintenanceBdStub(t, filepath.Join(binDir, "bd"))
+	// gc stub mirrors real `gc mail send`'s success line so the helper's
+	// awk parser can extract the bead id and follow up with `bd label add`.
+	writeExecutable(t, filepath.Join(binDir, "gc"), `#!/bin/sh
+printf '%s\n' "$*" >> "$GC_CALL_LOG"
+if [ "$1" = "mail" ] && [ "$2" = "send" ]; then
+    printf 'Sent message %s to mayor/\n' "${GC_STUB_MAIL_ID:-stub-id}"
+fi
+exit 0
+`)
+
+	env := reaperEscalationEnv(cityDir, binDir, stateDir, doltLog, bdLog, gcLog)
+	env["GC_STUB_MAIL_ID"] = "stub-anomaly-id"
+
+	runScript(t, filepath.Join(exampleDir(), "packs", "maintenance", "assets", "scripts", "reaper.sh"), env)
+
+	bdData, err := os.ReadFile(bdLog)
+	if err != nil {
+		t.Fatalf("ReadFile(bd log): %v", err)
+	}
+	bdText := string(bdData)
+	want := "label add stub-anomaly-id wisp_type:escalation"
+	if !strings.Contains(bdText, want) {
+		t.Fatalf("reaper did not label the escalation bead with wisp_type:escalation; bd log:\n%s", bdText)
+	}
+}
+
+func TestReaperEscalationReleaseFooterReportsSuppressedCount(t *testing.T) {
+	cityDir := t.TempDir()
+	writeCityBeadsMetadata(t, cityDir, "beads")
+	binDir := t.TempDir()
+	stateDir := t.TempDir()
+	doltLog := filepath.Join(t.TempDir(), "dolt-args.log")
+	bdLog := filepath.Join(t.TempDir(), "bd.log")
+	gcLog := filepath.Join(t.TempDir(), "gc.log")
+
+	writeMaintenanceDoltStub(t, filepath.Join(binDir, "dolt"))
+	writeMaintenanceBdStub(t, filepath.Join(binDir, "bd"))
+	writeExecutable(t, filepath.Join(binDir, "gc"), `#!/bin/sh
+printf '%s\n' "$*" >> "$GC_CALL_LOG"
+exit 0
+`)
+
+	subject := "ESCALATION: Reaper anomalies detected [MEDIUM]"
+	env := reaperEscalationEnv(cityDir, binDir, stateDir, doltLog, bdLog, gcLog)
+	script := filepath.Join(exampleDir(), "packs", "maintenance", "assets", "scripts", "reaper.sh")
+
+	// Run once so the helper records its own dedupe entry — we use this
+	// rather than a hand-computed sha256 so the test is robust to changes in
+	// the helper's exact payload normalisation.
+	runScript(t, script, env)
+	if got := countEscalationMails(t, gcLog, subject); got != 1 {
+		t.Fatalf("first run should send one fresh escalation, got %d", got)
+	}
+
+	// Mutate the state file in place: backdate last_sent_at to far past the
+	// cooldown window and pump suppressed_count to 3. The next tick must
+	// release with the cadence footer.
+	stateFile := filepath.Join(stateDir, "reaper-state.json")
+	stateBytes, err := os.ReadFile(stateFile)
+	if err != nil {
+		t.Fatalf("ReadFile(state): %v", err)
+	}
+	var state map[string]map[string]map[string]any
+	if err := json.Unmarshal(stateBytes, &state); err != nil {
+		t.Fatalf("Unmarshal: %v\n%s", err, stateBytes)
+	}
+	entries, ok := state["escalations"]
+	if !ok || len(entries) != 1 {
+		t.Fatalf("expected one dedupe entry after first run, got %v:\n%s", entries, stateBytes)
+	}
+	staleISO := "2025-01-01T00:00:00Z"
+	for key := range entries {
+		entries[key]["last_sent_at"] = staleISO
+		entries[key]["suppressed_count"] = 3
+	}
+	mutated, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if err := os.WriteFile(stateFile, mutated, 0o644); err != nil {
+		t.Fatalf("WriteFile(state): %v", err)
+	}
+
+	// Truncate the gc log so the next-run assertion sees only the released send.
+	if err := os.WriteFile(gcLog, nil, 0o644); err != nil {
+		t.Fatalf("Truncate(gc log): %v", err)
+	}
+
+	runScript(t, script, env)
+	gcData, err := os.ReadFile(gcLog)
+	if err != nil {
+		t.Fatalf("ReadFile(gc log): %v", err)
+	}
+	gcText := string(gcData)
+	if !strings.Contains(gcText, subject) {
+		t.Fatalf("reaper did not send the released ESCALATION:\n%s", gcText)
+	}
+	if !strings.Contains(gcText, "Suppressed 3 time(s)") {
+		t.Fatalf("released ESCALATION missing suppressed-count footer in gc log:\n%s", gcText)
+	}
+	if !strings.Contains(gcText, staleISO) {
+		t.Fatalf("released ESCALATION footer missing stale last_sent_at %q:\n%s", staleISO, gcText)
+	}
+}
+
+func TestJsonlSpikeEscalationSuppressesRepeats(t *testing.T) {
+	cityDir := t.TempDir()
+	binDir := t.TempDir()
+	stateDir := t.TempDir()
+	archiveRepo := filepath.Join(t.TempDir(), "archive")
+	gcLog := filepath.Join(t.TempDir(), "gc.log")
+	mailLog := filepath.Join(t.TempDir(), "gc-mail.log")
+
+	// Seed the archive with a small prev count so the next export's record
+	// count drives a 100%+ percentage delta (well above the 20% threshold).
+	initSeedArchive(t, archiveRepo, 10)
+	// Current export reports 50 rows — a 400% delta against prev_count=10.
+	writeMultiRecordDoltStub(t, binDir, 50)
+	writeJsonlExportGCStub(t, binDir)
+	writeExecutable(t, filepath.Join(binDir, "bd"), `#!/bin/sh
+if [ -n "${BD_LOG:-}" ]; then
+    printf '%s\n' "$*" >> "$BD_LOG"
+fi
+exit 0
+`)
+	linkTestPathTool(t, binDir, "git")
+	linkTestPathTool(t, binDir, "jq")
+	linkTestPathTool(t, binDir, "awk")
+	linkTestPathTool(t, binDir, "mktemp")
+	linkTestPathTool(t, binDir, "shasum")
+
+	env := jsonlExportEnv(t, cityDir, binDir, stateDir, archiveRepo, gcLog, mailLog)
+	// The legacy path makes new STATE_FILE coexist with $CITY/.gc/...; our
+	// helper only sees STATE_FILE, so we need the script to land on the new
+	// PACK_STATE_DIR path. jsonlExportEnv already sets GC_PACK_STATE_DIR.
+
+	script := filepath.Join(exampleDir(), "packs", "maintenance", "assets", "scripts", "jsonl-export.sh")
+	runScript(t, script, env)
+	runScript(t, script, env)
+
+	subject := "ESCALATION: JSONL spike detected [HIGH]"
+	if got := countEscalationMails(t, mailLog, subject); got != 1 {
+		t.Fatalf("expected one JSONL spike escalation across two runs (dedupe), got %d:\n%s", got, mustReadFile(t, mailLog))
+	}
+
+	stateBytes, err := os.ReadFile(filepath.Join(stateDir, "jsonl-export-state.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(state): %v", err)
+	}
+	if !strings.Contains(string(stateBytes), `"escalations"`) {
+		t.Fatalf("expected escalations key in jsonl-export state after first send:\n%s", stateBytes)
+	}
+	if !strings.Contains(string(stateBytes), subject) {
+		t.Fatalf("expected stored subject %q in jsonl-export state:\n%s", subject, stateBytes)
+	}
+}
+
+// mustReadFile reads a path or fatals — handy for one-line assertion error
+// messages that need to dump the failing log alongside the diagnosis.
+func mustReadFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Sprintf("(read %s: %v)", path, err)
+	}
+	return string(data)
+}
