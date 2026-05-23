@@ -38,7 +38,9 @@ var verifyDoltHealthyAfterRestartHook = verifyDoltHealthyAfterRestart
 // verifyDoltHealthyAfterRestart polls healthBeadsProvider until managed
 // Dolt is reachable, or until the configured budget expires. The error
 // it returns names the cause and the recovery path (`gc start`), which
-// the caller writes to stderr verbatim.
+// the caller writes to stderr verbatim. A single one-line "verifying"
+// message is written to stderr on entry so operators watching
+// `gc restart` see progress before the full budget elapses.
 //
 // No-ops on cities that don't use the bd store contract (file
 // providers) and on cities whose Dolt lifecycle is owned by something
@@ -59,6 +61,9 @@ func verifyDoltHealthyAfterRestart(cityPath string, stderr io.Writer) error {
 	}
 
 	timeout := restartDoltHealthTimeoutFromEnv()
+	if stderr != nil {
+		fmt.Fprintf(stderr, "Verifying managed Dolt is healthy (budget %s)...\n", timeout) //nolint:errcheck // best-effort progress message
+	}
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for {
@@ -77,7 +82,7 @@ func verifyDoltHealthyAfterRestart(cityPath string, stderr io.Writer) error {
 		cityRef = "<city>"
 	}
 	return fmt.Errorf(
-		"managed Dolt did not become healthy within %s after restart: %v\n"+
+		"managed Dolt did not become healthy within %s after restart: %w\n"+
 			"  The supervisor came back up, but the bead-store backend never reached a queryable state.\n"+
 			"  Recover with: gc start %s\n"+
 			"  (Override the budget with %s=<duration>, e.g. 45s.)",

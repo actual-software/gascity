@@ -213,7 +213,7 @@ func TestCmdRestartJSON_HealthcheckFailureExitsNonZero(t *testing.T) {
 	// need a real Dolt process to drive the failure branch.
 	probeErr := errors.New("dial tcp 127.0.0.1:0: connect: can't assign requested address")
 	restoreVerifyHook := overrideVerifyDoltHealthyAfterRestartHook(func(_ string, _ io.Writer) error {
-		return fmt.Errorf("managed Dolt did not become healthy within 100ms after restart: %v\n  Recover with: gc start %s", probeErr, cityPath)
+		return fmt.Errorf("managed Dolt did not become healthy within 100ms after restart: %w\n  Recover with: gc start %s", probeErr, cityPath)
 	})
 	defer restoreVerifyHook()
 
