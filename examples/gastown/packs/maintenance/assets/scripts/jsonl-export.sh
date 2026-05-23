@@ -34,9 +34,9 @@ ARCHIVE_REPO="${GC_JSONL_ARCHIVE_REPO:-$PACK_STATE_DIR/jsonl-archive}"
 
 # Label applied to ESCALATION mail beads so wisp-compact's retention policy
 # treats them as long-lived (7d TTL) rather than the 24h default. The label
-# add happens after `gc mail send`; if labelling fails (e.g. bd is missing
+# add happens after `gc mail send`; if labeling fails (e.g. bd is missing
 # in a smoke-test env, or the bead id cannot be parsed from stdout), the
-# escalation itself is unaffected — labelling is best-effort.
+# escalation itself is unaffected — labeling is best-effort.
 ESCALATION_LABEL="wisp_type:escalation"
 
 # Count records in a `dolt sql -r json` payload. The output is `{"rows":[...]}`

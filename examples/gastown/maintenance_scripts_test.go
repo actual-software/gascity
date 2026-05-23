@@ -4124,7 +4124,7 @@ func jsonlExportEnv(t *testing.T, cityDir, binDir, stateDir, archiveRepo, gcLog,
 // a separate log so tests can assert escalations independently of the noisier
 // nudge stream. On a successful mail-send, the stub also emits the
 // "Sent message <id> to <to>" line that the real `gc mail send` writes to
-// stdout, so callers can parse the new bead id for follow-up labelling.
+// stdout, so callers can parse the new bead id for follow-up labeling.
 func writeJsonlExportGCStub(t *testing.T, binDir string) {
 	t.Helper()
 	writeJsonlExportGCStubWithMailExitCode(t, binDir, 0)
@@ -6483,7 +6483,7 @@ func TestJsonlExportPushFailureEscalationGetsWispTypeEscalationLabel(t *testing.
 		t.Fatalf("expected push-failure escalation to fire as precondition; mail log:\n%s", mailData)
 	}
 
-	// Core assertion: the script labelled the new escalation bead.
+	// Core assertion: the script labeled the new escalation bead.
 	bdData, err := os.ReadFile(bdLog)
 	if err != nil {
 		t.Fatalf("ReadFile(bd log): %v", err)
