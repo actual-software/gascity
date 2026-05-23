@@ -32,6 +32,13 @@ MAX_PUSH_FAILURES="${GC_JSONL_MAX_PUSH_FAILURES:-3}"
 SCRUB="${GC_JSONL_SCRUB:-true}"
 ARCHIVE_REPO="${GC_JSONL_ARCHIVE_REPO:-$PACK_STATE_DIR/jsonl-archive}"
 
+# Label applied to ESCALATION mail beads so wisp-compact's retention policy
+# treats them as long-lived (7d TTL) rather than the 24h default. The label
+# add happens after `gc mail send`; if labelling fails (e.g. bd is missing
+# in a smoke-test env, or the bead id cannot be parsed from stdout), the
+# escalation itself is unaffected — labelling is best-effort.
+ESCALATION_LABEL="wisp_type:escalation"
+
 # Count records in a `dolt sql -r json` payload. The output is `{"rows":[...]}`
 # on (typically) a single physical line, so `wc -l` measures formatting, not
 # records. Falls back to 0 on empty/missing/unparseable input; jq parse errors
@@ -399,6 +406,31 @@ clear_pending_spike_alert() {
     )"
 }
 
+# Send an ESCALATION mail to mayor/ and label the resulting bead with
+# $ESCALATION_LABEL so wisp-compact's retention policy applies cleanly.
+# Returns 0 if the mail send itself succeeded, even if the label add failed —
+# the escalation already reached the mayor, so we never want a label hiccup
+# to look like a delivery failure to the caller.
+send_labeled_escalation_mail() {
+    local subject="$1"
+    local body="$2"
+    local sent_line
+    local bead_id
+
+    if ! sent_line=$(gc mail send mayor/ -s "$subject" -m "$body" 2>/dev/null); then
+        return 1
+    fi
+
+    # `gc mail send` prints "Sent message <bead-id> to <recipient>" on
+    # success. Extract just the id; tolerate variations and tools that
+    # might emit a trailing newline or extra context.
+    bead_id=$(printf '%s\n' "$sent_line" | awk '/^Sent message / {print $3; exit}')
+    if [ -n "$bead_id" ]; then
+        bd label add "$bead_id" "$ESCALATION_LABEL" >/dev/null 2>&1 || true
+    fi
+    return 0
+}
+
 send_spike_alert() {
     local db="$1"
     local prev_count="$2"
@@ -406,9 +438,9 @@ send_spike_alert() {
     local delta="$4"
     local threshold="$5"
 
-    gc mail send mayor/ -s "ESCALATION: JSONL spike detected [HIGH]" \
-        -m "Database: $db, prev: $prev_count, current: $current_count, delta: ${delta}%, threshold: ${threshold}%" \
-        2>/dev/null
+    send_labeled_escalation_mail \
+        "ESCALATION: JSONL spike detected [HIGH]" \
+        "Database: $db, prev: $prev_count, current: $current_count, delta: ${delta}%, threshold: ${threshold}%"
 }
 
 retry_pending_spike_alert() {
@@ -529,9 +561,9 @@ Remediation:
 - See docs/getting-started/troubleshooting.md#jsonl-archive-push-failures
 ESCALATION
 )
-            if gc mail send mayor/ -s "ESCALATION: JSONL push failed [HIGH]" \
-                -m "$body" \
-                2>/dev/null; then
+            if send_labeled_escalation_mail \
+                "ESCALATION: JSONL push failed [HIGH]" \
+                "$body"; then
                 mark_push_failure_escalated
             fi
         fi

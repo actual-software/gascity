@@ -4122,7 +4122,9 @@ func jsonlExportEnv(t *testing.T, cityDir, binDir, stateDir, archiveRepo, gcLog,
 
 // writeJsonlExportGCStub installs a `gc` shim that mirrors mail-send calls into
 // a separate log so tests can assert escalations independently of the noisier
-// nudge stream.
+// nudge stream. On a successful mail-send, the stub also emits the
+// "Sent message <id> to <to>" line that the real `gc mail send` writes to
+// stdout, so callers can parse the new bead id for follow-up labelling.
 func writeJsonlExportGCStub(t *testing.T, binDir string) {
 	t.Helper()
 	writeJsonlExportGCStubWithMailExitCode(t, binDir, 0)
@@ -4130,10 +4132,50 @@ func writeJsonlExportGCStub(t *testing.T, binDir string) {
 
 func writeJsonlExportGCStubWithMailExitCode(t *testing.T, binDir string, mailExitCode int) {
 	t.Helper()
+	// Default `bd` stub: silently absorb any `bd label add` calls the
+	// jsonl-export script makes on the newly-sent escalation bead. Tests
+	// that want to assert on label-add calls override this with a logging
+	// stub before invoking the script.
+	if _, err := os.Stat(filepath.Join(binDir, "bd")); errors.Is(err, os.ErrNotExist) {
+		writeExecutable(t, filepath.Join(binDir, "bd"), `#!/bin/sh
+if [ -n "${BD_LOG:-}" ]; then
+    printf '%s\n' "$*" >> "$BD_LOG"
+fi
+exit 0
+`)
+	}
 	writeExecutable(t, filepath.Join(binDir, "gc"), `#!/bin/sh
 printf '%s\n' "$*" >> "$GC_CALL_LOG"
 if [ "$1" = "mail" ] && [ "$2" = "send" ]; then
     printf '%s\n' "$*" >> "$GC_MAIL_LOG"
+    if [ `+strconv.Itoa(mailExitCode)+` -eq 0 ]; then
+        # Mirror the real "gc mail send" success line so callers that capture
+        # stdout can parse the new message bead id. The recipient flips
+        # between mayor/ and others across tests; default to "mayor/" since
+        # all maintenance-script escalations target it.
+        to="mayor/"
+        # Walk the args looking for the first non-flag positional after
+        # "mail send" — that is the recipient.
+        shift 2 2>/dev/null || true
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                -s|--subject|-m|--message|--from|--to|--cc|--label)
+                    shift 2 2>/dev/null || true
+                    ;;
+                --notify|--all)
+                    shift
+                    ;;
+                --*)
+                    shift
+                    ;;
+                *)
+                    to="$1"
+                    break
+                    ;;
+            esac
+        done
+        printf 'Sent message %s to %s\n' "${GC_STUB_MAIL_ID:-fm-test-stub}" "$to"
+    fi
     exit `+strconv.Itoa(mailExitCode)+`
 fi
 exit 0
@@ -6403,6 +6445,96 @@ func TestJsonlExportPushFailureEscalatesOncePerUnresolvedFailure(t *testing.T) {
 	}
 	if got, ok := state["push_failure_escalated"].(bool); !ok || !got {
 		t.Fatalf("push_failure_escalated = %v, want true\nstate: %s", state["push_failure_escalated"], stateData)
+	}
+}
+
+// TestJsonlExportPushFailureEscalationGetsWispTypeEscalationLabel covers the
+// 158-flood remediation contract: every ESCALATION mail the jsonl-export
+// script produces must carry the `wisp_type:escalation` label so wisp-compact
+// applies its 7-day retention TTL instead of the 24-hour default. The label
+// add is best-effort (silent on bd failure), but the call must happen.
+func TestJsonlExportPushFailureEscalationGetsWispTypeEscalationLabel(t *testing.T) {
+	cityDir := t.TempDir()
+	binDir := t.TempDir()
+	stateDir := t.TempDir()
+	gcLog := filepath.Join(t.TempDir(), "gc.log")
+	mailLog := filepath.Join(t.TempDir(), "gc-mail.log")
+	bdLog := filepath.Join(t.TempDir(), "bd.log")
+	archiveRepo := filepath.Join(cityDir, "archive")
+
+	initSeedArchiveWithUnreachableRemote(t, archiveRepo)
+	writeMultiRecordDoltStub(t, binDir, 5)
+	writeJsonlExportGCStub(t, binDir)
+
+	env := jsonlExportEnv(t, cityDir, binDir, stateDir, archiveRepo, gcLog, mailLog)
+	env["GC_JSONL_MAX_PUSH_FAILURES"] = "1"
+	env["BD_LOG"] = bdLog
+	// Pin the stub bead id so the assertion below can name it verbatim.
+	env["GC_STUB_MAIL_ID"] = "fm-test-push-escalation"
+
+	runScript(t, filepath.Join(exampleDir(), "packs", "maintenance", "assets", "scripts", "jsonl-export.sh"), env)
+
+	// Sanity: the mail itself fired.
+	mailData, err := os.ReadFile(mailLog)
+	if err != nil {
+		t.Fatalf("ReadFile(mail log): %v", err)
+	}
+	if !strings.Contains(string(mailData), "ESCALATION: JSONL push failed [HIGH]") {
+		t.Fatalf("expected push-failure escalation to fire as precondition; mail log:\n%s", mailData)
+	}
+
+	// Core assertion: the script labelled the new escalation bead.
+	bdData, err := os.ReadFile(bdLog)
+	if err != nil {
+		t.Fatalf("ReadFile(bd log): %v", err)
+	}
+	want := "label add fm-test-push-escalation wisp_type:escalation"
+	if !strings.Contains(string(bdData), want) {
+		t.Fatalf("bd log missing %q (label add on escalation bead):\n%s", want, bdData)
+	}
+}
+
+// TestJsonlExportSpikeEscalationGetsWispTypeEscalationLabel covers the same
+// contract for the second escalation path: the spike-detection mail must also
+// carry the `wisp_type:escalation` label. Spike alerts are far rarer than
+// push failures, but every escalation in the script needs to share the same
+// retention class so wisp-compact policy applies uniformly.
+func TestJsonlExportSpikeEscalationGetsWispTypeEscalationLabel(t *testing.T) {
+	cityDir := t.TempDir()
+	binDir := t.TempDir()
+	stateDir := t.TempDir()
+	gcLog := filepath.Join(t.TempDir(), "gc.log")
+	mailLog := filepath.Join(t.TempDir(), "gc-mail.log")
+	bdLog := filepath.Join(t.TempDir(), "bd.log")
+	archiveRepo := filepath.Join(cityDir, "archive")
+
+	// Seed previous count low enough that a +99 jump trips the spike check.
+	initSeedArchive(t, archiveRepo, 10)
+	writeMultiRecordDoltStub(t, binDir, 200)
+	writeJsonlExportGCStub(t, binDir)
+
+	env := jsonlExportEnv(t, cityDir, binDir, stateDir, archiveRepo, gcLog, mailLog)
+	env["GC_JSONL_SPIKE_THRESHOLD"] = "5"
+	env["BD_LOG"] = bdLog
+	env["GC_STUB_MAIL_ID"] = "fm-test-spike-escalation"
+
+	runScript(t, filepath.Join(exampleDir(), "packs", "maintenance", "assets", "scripts", "jsonl-export.sh"), env)
+
+	mailData, err := os.ReadFile(mailLog)
+	if err != nil {
+		t.Fatalf("ReadFile(mail log): %v", err)
+	}
+	if !strings.Contains(string(mailData), "ESCALATION: JSONL spike detected [HIGH]") {
+		t.Fatalf("expected spike escalation to fire as precondition; mail log:\n%s", mailData)
+	}
+
+	bdData, err := os.ReadFile(bdLog)
+	if err != nil {
+		t.Fatalf("ReadFile(bd log): %v", err)
+	}
+	want := "label add fm-test-spike-escalation wisp_type:escalation"
+	if !strings.Contains(string(bdData), want) {
+		t.Fatalf("bd log missing %q (label add on spike escalation bead):\n%s", want, bdData)
 	}
 }
 
