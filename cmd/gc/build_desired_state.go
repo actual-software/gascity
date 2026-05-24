@@ -357,7 +357,7 @@ func buildDesiredStateWithSessionBeads(
 		}
 		poolWorkBeads := filterAssignedWorkBeadsForPoolDemand(cfg, cityPath, sessionBeads.Open(), assignedWorkBeads, assignedWorkStoreRefs)
 		bp.assignedWorkBeads = poolWorkBeads
-		poolDesiredStates := ComputePoolDesiredStatesTraced(cfg, poolWorkBeads, sessionBeads.Open(), scaleCheckCounts, trace)
+		poolDesiredStates := ComputePoolDesiredStatesDebouncedTraced(cfg, poolWorkBeads, sessionBeads.Open(), scaleCheckCounts, poolScaleCheckPartialTemplates, trace)
 		for _, poolState := range poolDesiredStates {
 			cfgAgent := findAgentByTemplate(cfg, poolState.Template)
 			if cfgAgent == nil {

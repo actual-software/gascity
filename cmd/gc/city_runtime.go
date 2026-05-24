@@ -1601,8 +1601,8 @@ func (cr *CityRuntime) beadReconcileTick(ctx context.Context, result DesiredStat
 	if poolDesired == nil {
 		poolWorkBeads := filterAssignedWorkBeadsForPoolDemand(cr.cfg, cr.cityPath, sessionBeads.Open(), assignedWorkBeads, assignedWorkStoreRefs)
 		poolDesired = retainScaleCheckPartialPoolDesired(
-			PoolDesiredCounts(ComputePoolDesiredStatesTraced(
-				cr.cfg, poolWorkBeads, sessionBeads.Open(), result.ScaleCheckCounts, trace)),
+			PoolDesiredCounts(ComputePoolDesiredStatesDebouncedTraced(
+				cr.cfg, poolWorkBeads, sessionBeads.Open(), result.ScaleCheckCounts, result.PoolScaleCheckPartialTemplates, trace)),
 			sessionBeads,
 			result.PoolScaleCheckPartialTemplates,
 		)
@@ -2133,8 +2133,8 @@ func (cr *CityRuntime) controlDispatcherTick(ctx context.Context) {
 	open := filterSessionBeadsByName(updated, cfgNames)
 	poolWorkBeads := filterAssignedWorkBeadsForPoolDemand(filteredCfg, cr.cityPath, open, wfcResult.AssignedWorkBeads, wfcResult.AssignedWorkStoreRefs)
 	poolDesired := retainScaleCheckPartialPoolDesired(
-		PoolDesiredCounts(ComputePoolDesiredStates(
-			filteredCfg, poolWorkBeads, open, wfcResult.ScaleCheckCounts)),
+		PoolDesiredCounts(ComputePoolDesiredStatesDebounced(
+			filteredCfg, poolWorkBeads, open, wfcResult.ScaleCheckCounts, wfcResult.PoolScaleCheckPartialTemplates)),
 		newSessionBeadSnapshot(open),
 		wfcResult.PoolScaleCheckPartialTemplates,
 	)
@@ -2298,8 +2298,8 @@ func (cr *CityRuntime) loadDemandSnapshot(
 		}
 		poolWorkBeads := filterAssignedWorkBeadsForPoolDemand(cr.cfg, cr.cityPath, openSessionBeads, result.AssignedWorkBeads, result.AssignedWorkStoreRefs)
 		result.PoolDesiredCounts = retainScaleCheckPartialPoolDesired(
-			PoolDesiredCounts(ComputePoolDesiredStatesTraced(
-				cr.cfg, poolWorkBeads, openSessionBeads, result.ScaleCheckCounts, trace)),
+			PoolDesiredCounts(ComputePoolDesiredStatesDebouncedTraced(
+				cr.cfg, poolWorkBeads, openSessionBeads, result.ScaleCheckCounts, result.PoolScaleCheckPartialTemplates, trace)),
 			sessionBeads,
 			result.PoolScaleCheckPartialTemplates,
 		)

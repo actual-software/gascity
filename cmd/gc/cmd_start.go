@@ -879,8 +879,8 @@ func doStartStandalone(args []string, controllerMode bool, stdout, stderr io.Wri
 	dt := newDrainTracker()
 	poolWorkBeads := filterAssignedWorkBeadsForPoolDemand(cfg, cityPath, open, dsResult.AssignedWorkBeads, dsResult.AssignedWorkStoreRefs)
 	poolDesired := retainScaleCheckPartialPoolDesired(
-		PoolDesiredCounts(ComputePoolDesiredStates(
-			cfg, poolWorkBeads, open, dsResult.ScaleCheckCounts)),
+		PoolDesiredCounts(ComputePoolDesiredStatesDebounced(
+			cfg, poolWorkBeads, open, dsResult.ScaleCheckCounts, dsResult.PoolScaleCheckPartialTemplates)),
 		sessionBeads,
 		dsResult.PoolScaleCheckPartialTemplates,
 	)
