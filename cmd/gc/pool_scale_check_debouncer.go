@@ -70,7 +70,8 @@ func (d *poolScaleCheckDebouncer) debounce(raw map[string]int, partialTemplates 
 			out[template] = count
 			continue
 		}
-		h := append(d.history[template], count)
+		h := d.history[template]
+		h = append(h, count)
 		if len(h) > d.windowN {
 			h = h[len(h)-d.windowN:]
 		}
