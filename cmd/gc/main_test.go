@@ -216,6 +216,11 @@ func TestMain(m *testing.M) {
 	}
 	configureFSPressureForTests()
 	configureSupervisorHooksForTests()
+	// Disable the pool scale_check confirm window for tests so existing
+	// single-call assertions about spawn behavior continue to hold without
+	// having to seed the per-template history. Debouncer-specific tests opt
+	// back in via setPoolScaleCheckDebouncerWindowForTesting.
+	setPoolScaleCheckDebouncerWindowForTesting(1)
 	testscript.Main(newDoltLeakGuardedTestingM(m, testTempRoot, testTempRoot, gcHome, runtimeDir, providerStubDir, sharedTestFormulaDir, sharedTestCityDir), map[string]func(){
 		"gc": func() {
 			configureTestscriptEnvDefaults()

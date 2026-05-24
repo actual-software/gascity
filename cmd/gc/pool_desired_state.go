@@ -75,6 +75,38 @@ func ComputePoolDesiredStatesTraced(
 	return computePoolDesiredStates(cfg, assignedWorkBeads, sessionBeads, scaleCheckCounts, trace)
 }
 
+// ComputePoolDesiredStatesDebounced wraps ComputePoolDesiredStates with the
+// process-scoped scale_check confirm window. Reconciler call sites should
+// prefer this over the raw entry point so a single-tick flap on
+// scaleCheckCounts (e.g. a transient assignee release from an upstream race)
+// can't trigger a fresh pool spawn that has nothing to do. partialTemplates
+// is the set of templates whose probe failed this tick — those pass through
+// the debouncer unchanged so transient probe errors don't poison the window.
+func ComputePoolDesiredStatesDebounced(
+	cfg *config.City,
+	assignedWorkBeads []beads.Bead,
+	sessionBeads []beads.Bead,
+	scaleCheckCounts map[string]int,
+	partialTemplates map[string]bool,
+) []PoolDesiredState {
+	debounced := debouncePoolScaleCheckCounts(scaleCheckCounts, partialTemplates)
+	return computePoolDesiredStates(cfg, assignedWorkBeads, sessionBeads, debounced, nil)
+}
+
+// ComputePoolDesiredStatesDebouncedTraced is the traced variant of
+// ComputePoolDesiredStatesDebounced. See that function for the semantics.
+func ComputePoolDesiredStatesDebouncedTraced(
+	cfg *config.City,
+	assignedWorkBeads []beads.Bead,
+	sessionBeads []beads.Bead,
+	scaleCheckCounts map[string]int,
+	partialTemplates map[string]bool,
+	trace *sessionReconcilerTraceCycle,
+) []PoolDesiredState {
+	debounced := debouncePoolScaleCheckCounts(scaleCheckCounts, partialTemplates)
+	return computePoolDesiredStates(cfg, assignedWorkBeads, sessionBeads, debounced, trace)
+}
+
 func computePoolDesiredStates(
 	cfg *config.City,
 	assignedWorkBeads []beads.Bead,
