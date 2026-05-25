@@ -71,9 +71,11 @@ func (c *CachingStore) ApplyEvent(eventType string, payload json.RawMessage) {
 		verifiedClosedBase = conflictBase
 	}
 	if fieldConflictCached && eventType != "bead.closed" && locallyMutated && !verifiedConflict {
+		c.applyStatusOnlyTransition(patch, fields)
 		return
 	}
 	if dependencyConflictCached && eventType != "bead.closed" && locallyMutated && !verifiedConflict {
+		c.applyStatusOnlyTransition(patch, fields)
 		return
 	}
 	if conflictsCached && recentlyLocal && !verifiedConflict {
@@ -126,13 +128,16 @@ func (c *CachingStore) ApplyEvent(eventType string, payload json.RawMessage) {
 				}
 			} else {
 				if _, locallyMutated := c.beadSeq[patch.ID]; fieldConflict && locallyMutated {
+					c.applyStatusOnlyTransitionLocked(patch, fields)
 					return
 				}
 				if _, locallyMutated := c.beadSeq[patch.ID]; dependencyConflict && locallyMutated {
+					c.applyStatusOnlyTransitionLocked(patch, fields)
 					return
 				}
 				if recentLocalMutation(c.localBeadAt[patch.ID], time.Now()) &&
 					(!verifiedRecentLocal || beadChanged(current, verifiedRecentLocalBase, false)) {
+					c.applyStatusOnlyTransitionLocked(patch, fields)
 					return
 				}
 			}
@@ -518,4 +523,50 @@ func intPtrEqual(left, right *int) bool {
 	default:
 		return *left == *right
 	}
+}
+
+// applyStatusOnlyTransition is the locking entry point to
+// applyStatusOnlyTransitionLocked. See that function for the contract.
+func (c *CachingStore) applyStatusOnlyTransition(patch Bead, fields map[string]json.RawMessage) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state != cacheLive && c.state != cachePartial {
+		return
+	}
+	c.applyStatusOnlyTransitionLocked(patch, fields)
+}
+
+// applyStatusOnlyTransitionLocked applies just the status field from a
+// foreign bead.updated patch to the cached bead, when the cached bead is
+// "open" and the patch transitions it to a non-open status. The other
+// drop guards in ApplyEvent normally suppress foreign events whose
+// payload conflicts with locally-mutated state; this helper carves out
+// the open→non-open status transition as the one field that must reach
+// the cache regardless, because suppressing it leaves CachedReady()
+// returning the bead as if it were still ready demand — which surfaces
+// the bead to the supervisor's pool calculator as phantom builder-pool
+// demand and keeps respawning sessions against a bead that the CLI's
+// own bd ready correctly excludes.
+//
+// The fix is deliberately narrow: only the Status field is written; all
+// other locally-mutated fields stay as-is. The patch.Status is sourced
+// from the just-committed backing-store state via the bd on_update
+// hook, so we trust it without a separate backing.Get verification.
+// Caller must hold c.mu (write lock).
+func (c *CachingStore) applyStatusOnlyTransitionLocked(patch Bead, fields map[string]json.RawMessage) {
+	if !hasCacheEventField(fields, "status") {
+		return
+	}
+	if patch.Status == "" || patch.Status == "open" {
+		return
+	}
+	cached, ok := c.beads[patch.ID]
+	if !ok || cached.Status != "open" {
+		return
+	}
+	cached.Status = patch.Status
+	c.beads[patch.ID] = cached
+	c.noteMutationLocked(patch.ID)
+	c.markFreshLocked(time.Now())
+	c.updateStatsLocked()
 }

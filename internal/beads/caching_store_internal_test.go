@@ -2235,3 +2235,99 @@ func hasDep(deps []Dep, dependsOnID string) bool {
 	}
 	return false
 }
+
+// TestCachingStoreApplyEventInvalidatesCachedReadyOnExternalStatusTransition
+// covers the supervisor-pool-flap regression. The supervisor writes routing
+// metadata via the CachingStore (populating beadSeq, which the existing
+// local-mutation drop logic treats as a conflict tripwire for subsequent
+// foreign events). A builder running in a separate process then transitions
+// the bead to status=blocked via the bd CLI; the bd on_update hook fires a
+// bead.updated event whose patch has status=blocked. Without the fix
+// ApplyEvent drops the event because of the locally-mutated field
+// conflict, CachedReady() keeps returning the bead as if it were still
+// open, and the supervisor's defaultScaleCheckCounts counts it as
+// phantom builder-pool demand — driving the sustained pool flap this
+// regression test guards against.
+func TestCachingStoreApplyEventInvalidatesCachedReadyOnExternalStatusTransition(t *testing.T) {
+	t.Parallel()
+
+	backing := NewMemStore()
+	bead, err := backing.Create(Bead{
+		Title:    "routed",
+		Type:     "task",
+		Metadata: map[string]string{"gc.routed_to": "local-core.builder"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	cache := NewCachingStoreForTest(backing, nil)
+	if err := cache.Prime(context.Background()); err != nil {
+		t.Fatalf("Prime: %v", err)
+	}
+
+	if got, ok := cache.CachedReady(); !ok || !cachedReadyContains(got, bead.ID) {
+		t.Fatalf("CachedReady before mutation = (%v, %v), want bead %q included", got, ok, bead.ID)
+	}
+
+	// Build the foreign event payload BEFORE the supervisor's local write.
+	// Captures the realistic race where the bd subprocess wrote
+	// status=blocked but does not include the supervisor's later
+	// metadata write in its hook payload.
+	blocked := "blocked"
+	if err := backing.Update(bead.ID, UpdateOpts{Status: &blocked}); err != nil {
+		t.Fatalf("backing Update: %v", err)
+	}
+	fresh, err := backing.Get(bead.ID)
+	if err != nil {
+		t.Fatalf("backing Get: %v", err)
+	}
+	payload, err := json.Marshal(fresh)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	// Supervisor does a local metadata write — populates beadSeq[id].
+	if err := cache.SetMetadata(bead.ID, "claimed_by", "supervisor"); err != nil {
+		t.Fatalf("SetMetadata: %v", err)
+	}
+
+	cache.ApplyEvent("bead.updated", payload)
+
+	// CachedReady must exclude the bead. Without the fix the existing drop
+	// logic suppresses the foreign event and CachedReady returns the bead
+	// as if status=open — driving the phantom pool demand this regression
+	// test guards against.
+	got, ok := cache.CachedReady()
+	if !ok {
+		t.Fatalf("CachedReady after status→blocked returned ok=false; want ok=true with bead excluded")
+	}
+	if cachedReadyContains(got, bead.ID) {
+		t.Fatalf("CachedReady after status→blocked = %v, want bead %q excluded (supervisor pool-flap regression)", got, bead.ID)
+	}
+
+	// The cached bead's status must reflect the transition.
+	cachedBead, err := cache.Get(bead.ID)
+	if err != nil {
+		t.Fatalf("Get after apply: %v", err)
+	}
+	if cachedBead.Status != "blocked" {
+		t.Fatalf("cache.Get(%q).Status = %q, want blocked", bead.ID, cachedBead.Status)
+	}
+
+	// The local metadata write must be preserved — the fix applies only
+	// the status field from the foreign event, not the full payload, so
+	// locally-mutated fields are not clobbered by a stale-payload race.
+	if cachedBead.Metadata["claimed_by"] != "supervisor" {
+		t.Fatalf("cache.Get(%q).Metadata[claimed_by] = %q, want supervisor (local mutation preserved)", bead.ID, cachedBead.Metadata["claimed_by"])
+	}
+}
+
+func cachedReadyContains(beads []Bead, id string) bool {
+	for _, b := range beads {
+		if b.ID == id {
+			return true
+		}
+	}
+	return false
+}
