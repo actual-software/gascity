@@ -11,6 +11,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Test seams: cmdRestartJSON's stop / start / name-resolve steps are
+// indirected through these vars so tests can drive the post-restart
+// healthcheck branch without spinning a real city. Production callers
+// inherit the package-level defaults unchanged.
+var (
+	restartRegistrationNameHook        = restartRegistrationName
+	restartCmdStopHook                 = cmdStop
+	restartDoStartWithNameOverrideHook = doStartWithNameOverride
+)
+
 // newRestartCmd creates the top-level "gc restart" command.
 func newRestartCmd(stdout, stderr io.Writer) *cobra.Command {
 	var jsonOut bool
@@ -35,7 +45,7 @@ immediate reconcile.`,
 }
 
 func cmdRestartJSON(args []string, stdout, stderr io.Writer, jsonOut bool) int {
-	nameOverride, err := restartRegistrationName(args)
+	nameOverride, err := restartRegistrationNameHook(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "gc restart: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
@@ -44,11 +54,11 @@ func cmdRestartJSON(args []string, stdout, stderr io.Writer, jsonOut bool) int {
 	if jsonOut {
 		restartStdout = io.Discard
 	}
-	if code := cmdStop(args, restartStdout, stderr, 0, false); code != 0 {
+	if code := restartCmdStopHook(args, restartStdout, stderr, 0, false); code != 0 {
 		return code
 	}
-	code := doStartWithNameOverride(args, false /*controllerMode*/, restartStdout, stderr, nameOverride)
-	if code != 0 || !jsonOut {
+	code := restartDoStartWithNameOverrideHook(args, false /*controllerMode*/, restartStdout, stderr, nameOverride)
+	if code != 0 {
 		return code
 	}
 	cityPath := ""
@@ -56,6 +66,20 @@ func cmdRestartJSON(args []string, stdout, stderr io.Writer, jsonOut bool) int {
 		if resolved, err := requireBootstrappedCity(dir); err == nil {
 			cityPath = resolved
 		}
+	}
+	// Post-restart Dolt healthcheck. The supervisor reports a city as Running
+	// once its tick succeeds, but prepareCityForSupervisor treats the
+	// bead-store health probe as non-fatal — a "Running" city can have
+	// managed Dolt unreachable, which silently blinds every bd-backed
+	// alerting path. Verify before returning success.
+	if cityPath != "" {
+		if err := verifyDoltHealthyAfterRestartHook(cityPath, stderr); err != nil {
+			fmt.Fprintf(stderr, "gc restart: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+	}
+	if !jsonOut {
+		return code
 	}
 	return writeLifecycleActionJSONOrExit(stdout, stderr, "gc restart", lifecycleActionJSON{
 		Command:  "restart",
