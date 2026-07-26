@@ -1470,8 +1470,10 @@ func (cr *CityRuntime) runOrderTrackingSweepWatchdog(now time.Time) {
 
 // runOrderTrackingRetentionWatchdog deletes closed order-tracking beads that
 // are past their TTL (defaulting to 7d) and beyond the retain-10 floor, at
-// most once every orderTrackingRetentionWatchdogInterval. It deletes at most
-// orderTrackingRetentionWatchdogDeleteBudget beads per invocation.
+// most once every orderTrackingRetentionWatchdogInterval. It makes at most
+// orderTrackingRetentionWatchdogDeleteBudget delete attempts per invocation;
+// beads a concurrent sweeper already removed spend the budget without counting
+// toward the pruned total this reports.
 func (cr *CityRuntime) runOrderTrackingRetentionWatchdog(now time.Time) {
 	if !cr.orderTrackingRetentionWatchdogLast.IsZero() &&
 		now.Sub(cr.orderTrackingRetentionWatchdogLast) < orderTrackingRetentionWatchdogInterval {

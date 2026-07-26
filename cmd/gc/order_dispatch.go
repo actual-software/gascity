@@ -94,8 +94,12 @@ const (
 	// controller-driven closed-bead retention sweeps. 15 minutes balances
 	// effective cleanup against per-tick overhead.
 	orderTrackingRetentionWatchdogInterval = 15 * time.Minute
-	// orderTrackingRetentionWatchdogDeleteBudget bounds the number of
-	// closed order-tracking beads deleted per watchdog invocation.
+	// orderTrackingRetentionWatchdogDeleteBudget bounds the number of closed
+	// order-tracking delete ATTEMPTS per watchdog invocation. It deliberately
+	// counts attempts rather than successful deletions: every attempt costs the
+	// same several `bd` subprocesses regardless of outcome, so budgeting
+	// successes alone let a backlog whose beads a concurrent sweeper had
+	// already removed walk the whole list without ever reaching the limit.
 	orderTrackingRetentionWatchdogDeleteBudget = 100
 )
 
@@ -2356,32 +2360,58 @@ func sweepClosedOrderTrackingRetentionAcrossStores(stores []beads.Store, now tim
 
 // sweepClosedOrderTrackingRetentionAcrossStoresBounded is the watchdog variant
 // of sweepClosedOrderTrackingRetentionAcrossStores. It stops once the total
-// deletion count across all stores reaches limit, returning the partial deleted
+// delete ATTEMPTS across all stores reach limit, returning the partial deleted
 // count with a nil error on budget exhaustion. Store errors are returned as
 // normal; deletion errors within budget are propagated.
+//
+// The returned count stays the number of beads actually deleted, so the
+// watchdog's "pruned N closed bead(s)" line keeps reporting real prunes; the
+// attempt tally is internal and only spends the budget.
 func sweepClosedOrderTrackingRetentionAcrossStoresBounded(stores []beads.Store, now time.Time, policy orderTrackingRetentionPolicy, onlyOrders map[string]struct{}, limit int) (int, error) { //nolint:unparam // onlyOrders is nil at all current call sites; preserved for API parity with the unbounded variant
 	if limit <= 0 {
 		return 0, nil
 	}
 	deleted := 0
+	attempted := 0
 	var errs []error
 	for i, store := range stores {
 		if store == nil {
 			continue
 		}
-		remaining := limit - deleted
+		remaining := limit - attempted
 		if remaining <= 0 {
 			break
 		}
 		// Enforce the global budget by passing the remaining allowance to the
-		// per-store bounded sweep, which stops deleting once it is spent.
-		n, err := sweepClosedOrderTrackingRetentionBounded(store, now, policy, onlyOrders, remaining)
+		// per-store bounded sweep, which stops once it is spent.
+		n, tried, err := sweepClosedOrderTrackingRetentionBounded(store, now, policy, onlyOrders, remaining)
 		deleted += n
+		attempted += tried
 		if err != nil {
 			errs = append(errs, fmt.Errorf("pruning closed order-tracking %s: %w", orderTrackingSweepStoreLabel(store, i), err))
 		}
 	}
 	return deleted, errors.Join(errs...)
+}
+
+// orderTrackingRetentionDeleteAlreadyGone reports whether a retention-prune
+// delete failed only because the bead is already absent.
+//
+// The closed-tracking prune runs from two independent places: the controller's
+// runOrderTrackingRetentionWatchdog and the `gc order sweep-tracking` command an
+// order can fire on its own cadence. Both list the same closed set live (the
+// LiveReader handle bypasses the cache) and then delete bead-by-bead, so a bead
+// the other sweeper removed between our list and our delete comes back as
+// ErrNotFound. That is not a failure: the bead being gone IS the state the prune
+// was trying to reach, so it is counted as already-pruned rather than joined
+// into the sweep error.
+//
+// Treating it as a failure is what produced the observed pathology: a single
+// watchdog invocation emitting thousands of `deleting closed order-tracking bead
+// "...": bead not found` lines, because the loser of the race re-attempted every
+// bead the winner had already deleted.
+func orderTrackingRetentionDeleteAlreadyGone(err error) bool {
+	return errors.Is(err, beads.ErrNotFound)
 }
 
 func sweepClosedOrderTrackingRetention(store beads.Store, now time.Time, policy orderTrackingRetentionPolicy, onlyOrders map[string]struct{}) (int, error) {
@@ -2425,6 +2455,10 @@ func sweepClosedOrderTrackingRetention(store beads.Store, now time.Time, policy 
 			// deleteWorkflowBead is the graph-aware delete (dep unwind) the
 			// retention prune uses; it stays raw graph residual.
 			if err := deleteWorkflowBead(store, run.ID); err != nil {
+				if orderTrackingRetentionDeleteAlreadyGone(err) {
+					// A concurrent sweeper already pruned it. That is the goal state.
+					continue
+				}
 				deleteErr = errors.Join(deleteErr, fmt.Errorf("deleting closed order-tracking bead %q: %w", run.ID, err))
 				continue
 			}
@@ -2435,31 +2469,42 @@ func sweepClosedOrderTrackingRetention(store beads.Store, now time.Time, policy 
 }
 
 // sweepClosedOrderTrackingRetentionBounded is the per-store bounded variant of
-// sweepClosedOrderTrackingRetention. It stops deleting once limit deletions have
-// occurred within this store call. On budget exhaustion it returns the partial
-// count with a nil error; delete errors are still propagated.
-func sweepClosedOrderTrackingRetentionBounded(store beads.Store, now time.Time, policy orderTrackingRetentionPolicy, onlyOrders map[string]struct{}, limit int) (int, error) {
+// sweepClosedOrderTrackingRetention. It stops once limit delete ATTEMPTS have
+// been made within this store call, and returns both the number of beads it
+// actually deleted and the number of attempts it spent. On budget exhaustion it
+// returns the partial counts with a nil error; delete errors are still
+// propagated.
+//
+// The budget counts attempts rather than successes because every attempt costs
+// the same bounded work regardless of outcome. deleteWorkflowBead walks both
+// dep directions before deleting, which on the subprocess-backed store is
+// several `bd` invocations per bead. Budgeting successes alone let a list whose
+// beads had all been pruned by a concurrent sweeper burn thousands of failing
+// attempts in a single watchdog tick without ever reaching the limit, which is
+// the controller-tick churn this bound exists to cap.
+func sweepClosedOrderTrackingRetentionBounded(store beads.Store, now time.Time, policy orderTrackingRetentionPolicy, onlyOrders map[string]struct{}, limit int) (int, int, error) {
 	if store == nil {
-		return 0, fmt.Errorf("bead store unavailable")
+		return 0, 0, fmt.Errorf("bead store unavailable")
 	}
 	if policy.deleteAfterClose <= 0 || limit <= 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
 	if policy.retainLast < minClosedOrderTrackingRetained {
 		policy.retainLast = minClosedOrderTrackingRetained
 	}
 	runs, err := orders.NewStore(beads.OrdersStore{Store: store}).ClosedRunsForRetention()
 	if err != nil {
-		return 0, fmt.Errorf("listing closed order-tracking beads: %w", err)
+		return 0, 0, fmt.Errorf("listing closed order-tracking beads: %w", err)
 	}
 
 	byOrder := bucketClosedRetentionRuns(runs, onlyOrders)
 
 	cutoff := now.Add(-policy.deleteAfterClose)
 	deleted := 0
+	attempted := 0
 	var deleteErr error
 	for _, runs := range byOrder {
-		if deleted >= limit {
+		if attempted >= limit {
 			break
 		}
 		sort.Slice(runs, func(i, j int) bool {
@@ -2474,20 +2519,25 @@ func sweepClosedOrderTrackingRetentionBounded(store beads.Store, now time.Time, 
 			continue
 		}
 		for _, run := range runs[policy.retainLast:] {
-			if deleted >= limit {
+			if attempted >= limit {
 				break
 			}
 			if !orderTrackingClosedReferenceTime(run).Before(cutoff) {
 				continue
 			}
+			attempted++
 			if err := deleteWorkflowBead(store, run.ID); err != nil {
+				if orderTrackingRetentionDeleteAlreadyGone(err) {
+					// A concurrent sweeper already pruned it. That is the goal state.
+					continue
+				}
 				deleteErr = errors.Join(deleteErr, fmt.Errorf("deleting closed order-tracking bead %q: %w", run.ID, err))
 				continue
 			}
 			deleted++
 		}
 	}
-	return deleted, deleteErr
+	return deleted, attempted, deleteErr
 }
 
 func orderTrackingRetentionBucket(run orders.OrderRun, onlyOrders map[string]struct{}) (string, bool) {

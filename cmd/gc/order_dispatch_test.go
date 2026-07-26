@@ -10143,6 +10143,120 @@ func TestSweepClosedOrderTrackingRetentionAcrossStoresBounded_ZeroLimitDeletesNo
 	}
 }
 
+// goneDeleteStore reports every bead as already absent at delete time, which is
+// what the store does when a concurrent sweeper pruned the bead between our
+// live list and our delete. It counts delete calls so a test can assert how much
+// work a sweep spent, not just what it returned.
+type goneDeleteStore struct {
+	*beads.MemStore
+	deleteCalls int
+}
+
+func (s *goneDeleteStore) Delete(id string) error {
+	s.deleteCalls++
+	return fmt.Errorf("deleting bead %q: %w", id, beads.ErrNotFound)
+}
+
+// seedClosedTrackingRuns builds n closed order-tracking beads for one order, all
+// aged past a 24h TTL.
+func seedClosedTrackingRuns(prefix string, n int, now time.Time) []beads.Bead {
+	seed := make([]beads.Bead, 0, n)
+	for i := range n {
+		seed = append(seed, beads.Bead{
+			ID:        fmt.Sprintf("%s-%03d", prefix, i),
+			Title:     "order:" + prefix,
+			Status:    "closed",
+			Type:      "task",
+			CreatedAt: now.Add(-48*time.Hour + time.Duration(i)*time.Minute),
+			Labels:    []string{"order-run:" + prefix, labelOrderTracking},
+			Ephemeral: true,
+		})
+	}
+	return seed
+}
+
+// TestSweepClosedOrderTrackingRetentionTreatsAlreadyGoneBeadAsPruned pins the
+// idempotency half of the fix: a bead a concurrent sweeper already deleted is
+// the state the prune was trying to reach, so it must not be joined into the
+// sweep error. Reporting it as a failure is what made one watchdog invocation
+// emit thousands of `bead not found` lines.
+func TestSweepClosedOrderTrackingRetentionTreatsAlreadyGoneBeadAsPruned(t *testing.T) {
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	store := &goneDeleteStore{
+		MemStore: beads.NewMemStoreFrom(100, seedClosedTrackingRuns("gone", minClosedOrderTrackingRetained+3, now), nil),
+	}
+
+	deleted, err := sweepClosedOrderTrackingRetention(store, now, orderTrackingRetentionPolicy{
+		deleteAfterClose: 24 * time.Hour,
+		retainLast:       minClosedOrderTrackingRetained,
+	}, nil)
+	if err != nil {
+		t.Fatalf("err = %v, want nil (already-gone beads are not sweep failures)", err)
+	}
+	if deleted != 0 {
+		t.Fatalf("deleted = %d, want 0 (nothing was actually pruned by this sweep)", deleted)
+	}
+	if store.deleteCalls != 3 {
+		t.Fatalf("deleteCalls = %d, want 3 (the eligible beads past the retain floor)", store.deleteCalls)
+	}
+}
+
+// TestSweepClosedOrderTrackingRetentionBoundedCapsAttemptsWhenBeadsAlreadyGone
+// is the churn regression test. The watchdog's delete budget used to count only
+// successes, so a list whose beads had all been pruned by the other sweeper
+// never reached the limit and walked the entire backlog — thousands of `bd`
+// subprocess spawns in one controller tick. The budget now counts attempts, so
+// the sweep stops after `limit` deletes regardless of their outcome.
+func TestSweepClosedOrderTrackingRetentionBoundedCapsAttemptsWhenBeadsAlreadyGone(t *testing.T) {
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	const eligible = 200
+	store := &goneDeleteStore{
+		MemStore: beads.NewMemStoreFrom(1000, seedClosedTrackingRuns("churn", minClosedOrderTrackingRetained+eligible, now), nil),
+	}
+
+	deleted, err := sweepClosedOrderTrackingRetentionAcrossStoresBounded(
+		[]beads.Store{store}, now, orderTrackingRetentionPolicy{
+			deleteAfterClose: 24 * time.Hour,
+			retainLast:       minClosedOrderTrackingRetained,
+		}, nil, 5)
+	if err != nil {
+		t.Fatalf("err = %v, want nil (already-gone beads are not sweep failures)", err)
+	}
+	if deleted != 0 {
+		t.Fatalf("deleted = %d, want 0 (every bead was already gone)", deleted)
+	}
+	if store.deleteCalls != 5 {
+		t.Fatalf("deleteCalls = %d, want 5 (attempt budget must cap the sweep; %d beads were eligible)", store.deleteCalls, eligible)
+	}
+}
+
+// TestSweepClosedOrderTrackingRetentionBoundedCountsOnlyRealDeletions pins that
+// already-gone beads spend the budget without inflating the pruned count the
+// watchdog reports.
+func TestSweepClosedOrderTrackingRetentionBoundedCountsOnlyRealDeletions(t *testing.T) {
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	goneStore := &goneDeleteStore{
+		MemStore: beads.NewMemStoreFrom(100, seedClosedTrackingRuns("vanished", minClosedOrderTrackingRetained+4, now), nil),
+	}
+	liveStore := beads.NewMemStoreFrom(100, seedClosedTrackingRuns("present", minClosedOrderTrackingRetained+4, now), nil)
+
+	// limit=6 spans both stores: 4 already-gone attempts, then 2 real deletions.
+	deleted, err := sweepClosedOrderTrackingRetentionAcrossStoresBounded(
+		[]beads.Store{goneStore, liveStore}, now, orderTrackingRetentionPolicy{
+			deleteAfterClose: 24 * time.Hour,
+			retainLast:       minClosedOrderTrackingRetained,
+		}, nil, 6)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want 2 (only the beads this sweep actually removed)", deleted)
+	}
+	if goneStore.deleteCalls != 4 {
+		t.Fatalf("goneStore.deleteCalls = %d, want 4", goneStore.deleteCalls)
+	}
+}
+
 // TestLastRunFuncGatesFallbackOnIndexMiss pins #3201: the per-order fallback
 // (a serial bd-query) must fire only on a genuine index miss. An index hit must
 // return the indexed time without consulting the fallback — otherwise every
