@@ -94,8 +94,12 @@ const (
 	// controller-driven closed-bead retention sweeps. 15 minutes balances
 	// effective cleanup against per-tick overhead.
 	orderTrackingRetentionWatchdogInterval = 15 * time.Minute
-	// orderTrackingRetentionWatchdogDeleteBudget bounds the number of
-	// closed order-tracking beads deleted per watchdog invocation.
+	// orderTrackingRetentionWatchdogDeleteBudget bounds the number of closed
+	// order-tracking delete ATTEMPTS per watchdog invocation. It deliberately
+	// counts attempts rather than successful deletions: every attempt costs the
+	// same several `bd` subprocesses regardless of outcome, so budgeting
+	// successes alone let a backlog whose beads a concurrent sweeper had
+	// already removed walk the whole list without ever reaching the limit.
 	orderTrackingRetentionWatchdogDeleteBudget = 100
 )
 
