@@ -19,6 +19,10 @@ import (
 // The script receives environment variables:
 //
 //	GC_CITY_PATH    — absolute path to the city root
+//	FACTORY_ROOT    — absolute path to the city root, for scripts that key
+//	                  off it; set so a script never falls back to the working
+//	                  directory, which is the pack dir inside gc's import
+//	                  cache and must not be written to
 //	GC_PACK_DIR — absolute path to the pack directory
 //
 // When FixScript is non-empty, the check also supports `gc doctor --fix`:

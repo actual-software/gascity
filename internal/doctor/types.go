@@ -106,4 +106,12 @@ type CheckResult struct {
 	// the runner reports StatusError/SeverityAdvisory so the run keeps
 	// going without gating automation on an unfinished check.
 	TimedOut bool
+	// Skipped is true when this result stands in for a group of checks
+	// that never ran, rather than for a check that ran and failed. Set by
+	// SkippedCheck; counted into Report.Skipped so the summary can state
+	// how much of the factory went uninspected.
+	//
+	// Distinct from TimedOut above: a timed-out check started and its
+	// outcome is unknown, whereas a skipped group never registered at all.
+	Skipped bool
 }

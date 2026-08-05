@@ -194,6 +194,64 @@ func doctorOrderFiringCurrentLastRunFunc(cityPath string, cfg *config.City, stde
 	}
 }
 
+// configDependentCheckGroups names the check families that only register when
+// the city config loads cleanly. When it does not, each one registers a
+// blocking skip result instead of vanishing.
+//
+// The list is ordered for the reader rather than for buildDoctorChecks: the
+// pack-doctor entry leads because it is the group operators are most likely
+// to assume ran, being the checks a pack ships to watch the factory's own
+// moving parts.
+//
+// Maintenance contract: every `cfgErr == nil` gated register block in
+// buildDoctorChecks must be covered by an entry here. A gated block with no
+// entry is dropped silently on a failed config load, which is the exact
+// defect this list exists to close.
+var configDependentCheckGroups = []struct{ name, covers string }{
+	{"pack-doctor-checks", "every check script shipped by an imported pack"},
+	{"pack-source-checks", "pack import cache freshness and pack-source credential rules"},
+	{"config-validation-checks", "config validity, references, semantics, and provider parity"},
+	{"rig-checks", "per-rig path, git, branch, beads, and Dolt checks"},
+	{"data-checks", "beads store, split-store, backlog depth, and order retention"},
+	{"session-checks", "agent, zombie, and orphan session checks"},
+	{"dolt-ops-checks", "Dolt topology, drift, and Postgres auth checks"},
+}
+
+// registerConfigDependentSkips records one blocking skip per config-dependent
+// check group. It runs when the city config fails to load, which is the state
+// that used to drop those groups silently: `gc doctor` printed a shorter
+// summary that read healthier than the previous run, because the checks that
+// had been failing disappeared along with everything else.
+//
+// A stray worktree change in gc's pack import cache is the common trigger, so
+// the fix hint names the command that repairs it.
+func registerConfigDependentSkips(register func(doctor.Check), cityPath string, cfgErr error) {
+	// The cause goes in the details, not the message: it is the same error on
+	// every line, and repeating it six times buries the group names.
+	var details []string
+	if cfgErr != nil {
+		details = []string{fmt.Sprintf("config load error: %v", cfgErr)}
+	}
+	const hint = "fix the config error above, then rerun gc doctor; if it names a cached import with local worktree changes, run \"gc import install\" to restore the cache"
+
+	// Re-read the config when the check runs, not now. Under --fix an earlier
+	// check may repair the config that caused these skips (the v2 migration
+	// fixes do exactly that), and a skip that still reported a hard failure
+	// afterwards would be blaming a problem that no longer exists.
+	stillBroken := func() bool {
+		_, err := loadCityConfig(cityPath, io.Discard)
+		return err != nil
+	}
+
+	for _, group := range configDependentCheckGroups {
+		register(doctor.SkippedCheck(group.name,
+			fmt.Sprintf("%s; the city config did not load", group.covers),
+			hint,
+			stillBroken,
+			details...))
+	}
+}
+
 func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts buildDoctorChecksOpts) []doctor.Check {
 	var checks []doctor.Check
 	register := func(c doctor.Check) {
@@ -218,7 +276,13 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 	register(&doctor.DeprecatedAttachmentFieldsCheck{})
 
 	// Config-dependent checks run only when city.toml loaded cleanly. If it
-	// fails, the core config check above reports the parse error.
+	// fails, the core config check above reports the parse error — but the
+	// dropped groups also register a blocking skip result each, so the run
+	// cannot finish looking healthy just because most of the factory went
+	// uninspected. See registerConfigDependentSkips.
+	if cfgErr != nil || cfg == nil {
+		registerConfigDependentSkips(register, cityPath, cfgErr)
+	}
 	if cfgErr == nil && cfg != nil {
 		resolveRigPaths(cityPath, cfg.Rigs)
 		if workspaceUsesManagedBdStoreContract(cityPath, cfg.Rigs) {
@@ -591,6 +655,9 @@ type doctorJSONResult struct {
 	// distinguish an abandoned check (outcome unknown, worth retrying) from a
 	// check that ran and returned an ordinary advisory error.
 	TimedOut bool `json:"timed_out,omitempty"`
+	// Skipped projects CheckResult.Skipped so automation can tell a group
+	// that never ran from a check that ran and failed.
+	Skipped bool `json:"skipped,omitempty"`
 }
 
 type doctorJSONReport struct {
@@ -599,6 +666,7 @@ type doctorJSONReport struct {
 	Failed         int                `json:"failed"`
 	BlockingFailed int                `json:"blocking_failed"`
 	Fixed          int                `json:"fixed"`
+	Skipped        int                `json:"skipped"`
 	Results        []doctorJSONResult `json:"results"`
 	Error          string             `json:"error,omitempty"`
 }
@@ -632,6 +700,7 @@ func writeDoctorJSON(w io.Writer, report *doctor.Report) error {
 		Failed:         report.Failed,
 		BlockingFailed: report.BlockingFailed,
 		Fixed:          report.Fixed,
+		Skipped:        report.Skipped,
 		Results:        make([]doctorJSONResult, 0, len(report.Results)),
 	}
 	for _, r := range report.Results {
@@ -646,6 +715,7 @@ func writeDoctorJSON(w io.Writer, report *doctor.Report) error {
 			FixError:     r.FixError,
 			Fixed:        r.Fixed,
 			TimedOut:     r.TimedOut,
+			Skipped:      r.Skipped,
 		})
 	}
 	return writeCLIJSONLine(w, out)

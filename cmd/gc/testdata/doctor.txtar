@@ -36,6 +36,12 @@ cd $WORK/broken-city
 stdout 'city-config'
 stdout 'parse error'
 stdout 'failed'
+# A failed config load drops every config-dependent check group. The unit
+# tests pin that the skips are registered; these lines pin that they reach
+# the operator, which is the part that made the original defect invisible.
+stdout 'pack-doctor-checks'
+stdout 'check groups skipped'
+stdout 'not fully inspected'
 
 -- empty --
 -- broken-city/.gc/.keep --

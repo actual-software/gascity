@@ -169,8 +169,18 @@ func CityIdentityEnvMap(cityRoot string) map[string]string {
 }
 
 // PackRuntimeEnv returns city runtime env vars plus the canonical pack state dir.
+//
+// FACTORY_ROOT is exported alongside the GC_* vars because pack scripts are
+// launched with their working directory set to the pack directory, which for
+// an imported pack lives inside gc's global import cache rather than in the
+// city tree. A script that resolves its state directory against FACTORY_ROOT
+// with a fall back to the working directory therefore wrote into the cache
+// clone, leaving it dirty; the next gc invocation then refused the dirty
+// cache, failed config load, and dropped every pack check. Handing the script
+// the city root closes that loop at the source.
 func PackRuntimeEnv(cityRoot, packName string) []string {
 	env := CityRuntimeEnv(cityRoot)
+	env = append(env, "FACTORY_ROOT="+cityRoot)
 	if packName != "" {
 		env = append(env, "GC_PACK_STATE_DIR="+PackStateDir(cityRoot, packName))
 	}
@@ -178,8 +188,10 @@ func PackRuntimeEnv(cityRoot, packName string) []string {
 }
 
 // PackRuntimeEnvMap returns city runtime env vars plus the canonical pack state dir.
+// FACTORY_ROOT is included for the reason documented on PackRuntimeEnv.
 func PackRuntimeEnvMap(cityRoot, packName string) map[string]string {
 	env := CityRuntimeEnvMap(cityRoot)
+	env["FACTORY_ROOT"] = cityRoot
 	if packName != "" {
 		env["GC_PACK_STATE_DIR"] = PackStateDir(cityRoot, packName)
 	}

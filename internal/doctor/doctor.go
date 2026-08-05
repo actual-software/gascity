@@ -27,6 +27,17 @@ type Report struct {
 	BlockingFailed int
 	// Fixed is the number of checks remediated by --fix.
 	Fixed int
+	// Skipped is the number of check groups that never ran, as reported by
+	// SkippedCheck. While the cause is unresolved such a group is also
+	// counted in Failed and BlockingFailed, so it gates the exit code the
+	// same way a failing check does.
+	//
+	// The exception is a group whose cause was repaired earlier in the same
+	// --fix run: SkippedCheck downgrades that to a warning, so it counts in
+	// Warned instead and does not gate the exit code. Automation must not
+	// read Skipped > 0 as implying BlockingFailed > 0. Either way the group
+	// did not run, so it is always counted here.
+	Skipped int
 	// Results holds the per-check results in the order they ran. Populated
 	// by Run so callers that need structured output (e.g. `gc doctor --json`)
 	// can project every result without re-running checks.
@@ -121,6 +132,14 @@ func (d *Doctor) run(ctx *CheckContext, w io.Writer, fix, stream bool) *Report {
 // check counts as passed; a failing check increments BlockingFailed only when
 // its severity gates.
 func (r *Report) tally(result *CheckResult) {
+	// Counted outside the switch: a skipped group reports as an error when
+	// its cause is unresolved and as a warning when something repaired the
+	// cause mid-run. Either way the group did not run, so the summary must
+	// say so.
+	if result.Skipped && !result.Fixed {
+		r.Skipped++
+	}
+
 	switch {
 	case result.Fixed:
 		r.Fixed++
@@ -288,6 +307,13 @@ func PrintSummary(w io.Writer, r *Report) {
 	if r.Fixed > 0 {
 		parts = append(parts, fmt.Sprintf("%d fixed", r.Fixed))
 	}
+	if r.Skipped > 0 {
+		noun := "check groups"
+		if r.Skipped == 1 {
+			noun = "check group"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s skipped", r.Skipped, noun))
+	}
 	if len(parts) == 0 {
 		fmt.Fprintln(w, "\nNo checks ran.") //nolint:errcheck // best-effort output
 		return
@@ -300,4 +326,10 @@ func PrintSummary(w io.Writer, r *Report) {
 		fmt.Fprintf(w, "%s", p) //nolint:errcheck // best-effort output
 	}
 	fmt.Fprintf(w, "\n") //nolint:errcheck // best-effort output
+	if r.Skipped > 0 {
+		// Without this line the count above reads as a clean bill of health
+		// on a smaller factory, which is exactly how a dropped check group
+		// goes unnoticed.
+		fmt.Fprintf(w, "This factory was not fully inspected — see the skipped groups above.\n") //nolint:errcheck // best-effort output
+	}
 }
