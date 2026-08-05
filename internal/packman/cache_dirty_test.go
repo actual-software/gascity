@@ -20,17 +20,32 @@ import (
 //
 // The argument list is the defect, so that is what these tests pin.
 
+// statusShowsIgnored reports whether a `git status` argument list would print
+// `!! <path>` lines. git accepts the flag in several spellings and they are not
+// interchangeable to a naive equality check: bare --ignored means
+// --ignored=traditional, and --ignored=matching prints the same `!!` lines
+// (verified against git 2.50.1). Only --ignored=no suppresses them. Matching on
+// the exact string "--ignored" alone would let --ignored=matching reintroduce
+// the defect with every test in this file still green, so unrecognized modes
+// fail closed.
+func statusShowsIgnored(args []string) bool {
+	return slices.ContainsFunc(args, func(arg string) bool {
+		return strings.HasPrefix(arg, "--ignored") && arg != "--ignored=no"
+	})
+}
+
 // gitStatusStub reports the status arguments cachedRepoDirty passed, and models
 // git's own behavior: --ignored adds a `!! <path>` line for an ignored artifact,
 // and a plain --porcelain run does not report it at all.
-func gitStatusStub(t *testing.T, ignoredArtifact string) *[]string {
+// The returned accessor reports the status arguments seen so far.
+func gitStatusStub(t *testing.T, ignoredArtifact string) func() []string {
 	t.Helper()
 	var seen []string
 	prev := runGit
 	runGit = func(_ string, args ...string) (string, error) {
 		if len(args) > 0 && args[0] == "status" {
 			seen = append([]string(nil), args...)
-			if slices.Contains(args, "--ignored") {
+			if statusShowsIgnored(args) {
 				return "!! " + ignoredArtifact + "\n", nil
 			}
 			return "", nil
@@ -38,23 +53,23 @@ func gitStatusStub(t *testing.T, ignoredArtifact string) *[]string {
 		return "", nil
 	}
 	t.Cleanup(func() { runGit = prev })
-	return &seen
+	return func() []string { return seen }
 }
 
 func TestCachedRepoDirtyIgnoresGitignoredArtifacts(t *testing.T) {
 	const artifact = "packs/local-core/.runtime/"
-	seen := gitStatusStub(t, artifact)
+	statusArgs := gitStatusStub(t, artifact)
 
 	dirty, err := cachedRepoDirty(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if *seen == nil {
+	if statusArgs() == nil {
 		t.Fatal("cachedRepoDirty never ran git status, so this test asserts nothing")
 	}
-	if slices.Contains(*seen, "--ignored") {
-		t.Errorf("git status ran with --ignored (%v); a gitignored artifact must not mark a cache clone dirty", *seen)
+	if statusShowsIgnored(statusArgs()) {
+		t.Errorf("git status ran with --ignored (%v); a gitignored artifact must not mark a cache clone dirty", statusArgs())
 	}
 	if dirty {
 		t.Errorf("gitignored artifact %q reported the cache dirty", artifact)
