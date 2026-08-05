@@ -910,7 +910,7 @@ func doOrderRunExecResult(a orders.Order, cityPath string, cfg *config.City, var
 	// and combined output against the projected env on both the failure and
 	// success paths, matching the controller dispatch path (order_dispatch.go).
 	redactionEnv := append(os.Environ(), env...)
-	// Honour success_exit_codes here too. A manual run that reported failure
+	// Honor success_exit_codes here too. A manual run that reported failure
 	// for a code the scheduled run treats as informational would disagree with
 	// the controller about whether the same command succeeded.
 	if exitCode, resolved := orders.ExitCodeFromError(err); err != nil && resolved && ctx.Err() == nil && a.IsSuccessExitCode(exitCode) {

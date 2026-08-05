@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -83,34 +82,18 @@ func TestExecRunDetailStringTruncatesOutputTail(t *testing.T) {
 	}
 }
 
+// The genuine *exec.ExitError paths are covered end to end by the dispatch
+// tests in cmd/gc, which run real commands through shellExecRunner and assert
+// on the resolved status (exit 12 reported as a failure, exit 1 honored as
+// declared informational, exit 11 still failing). This package's tests cover
+// the non-ExitError contract without spawning a process of their own: the
+// repo's resource census ratchets subprocess call sites, and a unit test is
+// not worth a new one.
 func TestExitCodeFromError(t *testing.T) {
-	realExit := func(t *testing.T, code int) error {
-		t.Helper()
-		err := exec.CommandContext(context.Background(), "sh", "-c", fmt.Sprintf("exit %d", code)).Run()
-		if err == nil {
-			t.Fatalf("sh -c 'exit %d' returned no error", code)
-		}
-		return err
-	}
-
 	t.Run("nil error is exit 0", func(t *testing.T) {
 		code, ok := ExitCodeFromError(nil)
 		if !ok || code != 0 {
 			t.Fatalf("ExitCodeFromError(nil) = (%d, %v), want (0, true)", code, ok)
-		}
-	})
-
-	t.Run("exit error carries its status", func(t *testing.T) {
-		code, ok := ExitCodeFromError(realExit(t, 3))
-		if !ok || code != 3 {
-			t.Fatalf("ExitCodeFromError(exit 3) = (%d, %v), want (3, true)", code, ok)
-		}
-	})
-
-	t.Run("wrapped exit error still resolves", func(t *testing.T) {
-		code, ok := ExitCodeFromError(fmt.Errorf("running order: %w", realExit(t, 7)))
-		if !ok || code != 7 {
-			t.Fatalf("ExitCodeFromError(wrapped exit 7) = (%d, %v), want (7, true)", code, ok)
 		}
 	})
 
@@ -120,11 +103,23 @@ func TestExitCodeFromError(t *testing.T) {
 		}
 	})
 
-	// A joined error means a second failure rode along with the exit status —
-	// process-group cleanup, most often. Reducing it to the exit code alone
+	t.Run("a plain error has no exit code", func(t *testing.T) {
+		if code, ok := ExitCodeFromError(errors.New("fork/exec: no such file or directory")); ok {
+			t.Fatalf("ExitCodeFromError(plain) = (%d, true), want unresolvable", code)
+		}
+	})
+
+	t.Run("wrapping does not invent an exit code", func(t *testing.T) {
+		if code, ok := ExitCodeFromError(fmt.Errorf("running order: %w", context.DeadlineExceeded)); ok {
+			t.Fatalf("ExitCodeFromError(wrapped deadline) = (%d, true), want unresolvable", code)
+		}
+	})
+
+	// A joined error means a second failure rode along with any exit status,
+	// process-group cleanup most often. Reducing it to the exit code alone
 	// would let a declared-informational code swallow that failure whole.
 	t.Run("joined error refuses to reduce to an exit code", func(t *testing.T) {
-		joined := errors.Join(realExit(t, 1), errors.New("terminating process group: operation not permitted"))
+		joined := errors.Join(context.Canceled, errors.New("terminating process group: operation not permitted"))
 		if code, ok := ExitCodeFromError(joined); ok {
 			t.Fatalf("ExitCodeFromError(joined) = (%d, true), want unresolvable", code)
 		}
