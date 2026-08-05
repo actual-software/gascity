@@ -73,6 +73,15 @@ type Order struct {
 	// (gastownhall/gascity#2893). Non-idempotent orders (the
 	// default, false) keep failing CLOSED on gate timeout.
 	Idempotent bool `toml:"idempotent,omitempty"`
+	// SuccessExitCodes lists non-zero exit codes an exec order's command
+	// treats as a successful (informational) outcome rather than a failure.
+	// Exit 0 is always success and never needs listing. Use it for scripts
+	// whose documented contract reserves a low non-zero code for "I ran, and
+	// here is what I found" — e.g. a drift detector that exits 1 when drift
+	// exists, having already reported it. Without this, every such run is
+	// recorded as order.failed and a real failure becomes indistinguishable
+	// from a healthy one. Supported only for exec orders.
+	SuccessExitCodes []int `toml:"success_exit_codes,omitempty"`
 	// Env is a map of environment variables exported into an exec
 	// order's child process. Use the `[order.env]` TOML table to
 	// override thresholds (e.g. GC_DOCTOR_LATENCY_WARN_S) without
@@ -129,6 +138,7 @@ type orderDecode struct {
 	CheckTimeout string                `toml:"check_timeout,omitempty"`
 	Enabled      *bool                 `toml:"enabled,omitempty"`
 	Idempotent   bool                  `toml:"idempotent,omitempty"`
+	SuccessExit  []int                 `toml:"success_exit_codes,omitempty"`
 	Env          map[string]string     `toml:"env,omitempty"`
 	Params       map[string]OrderParam `toml:"params,omitempty"`
 	SkipAliases  []string              `toml:"skip_aliases,omitempty"`
@@ -140,24 +150,25 @@ func (d orderDecode) normalized() Order {
 		trigger = d.Gate
 	}
 	return Order{
-		Description:  d.Description,
-		Formula:      d.Formula,
-		Exec:         d.Exec,
-		Scope:        d.Scope,
-		Trigger:      trigger,
-		Interval:     d.Interval,
-		Schedule:     d.Schedule,
-		TZ:           d.TZ,
-		Check:        d.Check,
-		On:           d.On,
-		Pool:         d.Pool,
-		Timeout:      d.Timeout,
-		CheckTimeout: d.CheckTimeout,
-		Enabled:      d.Enabled,
-		Idempotent:   d.Idempotent,
-		Env:          d.Env,
-		Params:       d.Params,
-		skipAliases:  d.SkipAliases,
+		Description:      d.Description,
+		Formula:          d.Formula,
+		Exec:             d.Exec,
+		Scope:            d.Scope,
+		Trigger:          trigger,
+		Interval:         d.Interval,
+		Schedule:         d.Schedule,
+		TZ:               d.TZ,
+		Check:            d.Check,
+		On:               d.On,
+		Pool:             d.Pool,
+		Timeout:          d.Timeout,
+		CheckTimeout:     d.CheckTimeout,
+		Enabled:          d.Enabled,
+		Idempotent:       d.Idempotent,
+		SuccessExitCodes: d.SuccessExit,
+		Env:              d.Env,
+		Params:           d.Params,
+		skipAliases:      d.SkipAliases,
 	}
 }
 
@@ -178,6 +189,21 @@ func (a *Order) IsEnabled() bool {
 // rather than formula (wisp) dispatch.
 func (a *Order) IsExec() bool {
 	return a.Exec != ""
+}
+
+// IsSuccessExitCode reports whether an exec order's child process exit code
+// counts as a successful outcome. Exit 0 always does. Any other code counts
+// only when the order lists it in success_exit_codes.
+func (a *Order) IsSuccessExitCode(code int) bool {
+	if code == 0 {
+		return true
+	}
+	for _, allowed := range a.SuccessExitCodes {
+		if allowed == code {
+			return true
+		}
+	}
+	return false
 }
 
 // IsCityScoped reports whether the order is city-scoped, i.e. instantiated
@@ -240,6 +266,17 @@ func Validate(a Order) error {
 	}
 	if len(a.Env) > 0 && a.Exec == "" {
 		return fmt.Errorf("order %q: env is supported only for exec orders", a.Name)
+	}
+	if len(a.SuccessExitCodes) > 0 && a.Exec == "" {
+		return fmt.Errorf("order %q: success_exit_codes is supported only for exec orders", a.Name)
+	}
+	for _, code := range a.SuccessExitCodes {
+		if code == 0 {
+			return fmt.Errorf("order %q: success_exit_codes must not list 0 (exit 0 is always success)", a.Name)
+		}
+		if code < 1 || code > 255 {
+			return fmt.Errorf("order %q: invalid success_exit_codes entry %d: must be between 1 and 255", a.Name, code)
+		}
 	}
 	// Exec orders must not have a pool (no agent pipeline).
 	if a.Exec != "" && a.Pool != "" {

@@ -1362,15 +1362,51 @@ func (m *memoryOrderDispatcher) dispatchExec(ctx context.Context, front *orders.
 	env, err := orderExecEnvWithError(cityPath, m.cfg, target, a, vars)
 	var output []byte
 	var execErrMsg string
+	// runDetail is the durable "what ran, how it exited, what it said" record.
+	// It is written to the tracking bead whenever the command exits non-zero,
+	// whether that code means failure or is one the order declares
+	// informational, so the record of a run finally carries its reason.
+	var runDetail string
 	if err != nil {
 		redactionEnv := append(os.Environ(), env...)
 		redacted := redactOrderEnvError(err, redactionEnv)
 		execErrMsg = "exec env failed: " + redacted
 		outcome = orders.RunOutcomeExecEnvFailed
+		runDetail = execenv.RedactText(orders.ExecRunDetail{
+			Command:  a.Exec,
+			ExitCode: -1,
+			Err:      "exec env failed: " + err.Error(),
+		}.String(), redactionEnv)
 		logDispatchError(m.stderr, "gc: order exec %s env failed: %s", scoped, redacted)
 	} else {
 		output, err = m.execRun(ctx, a.Exec, target.ScopeRoot, env)
-		if err != nil {
+		exitCode, resolved := orders.ExitCodeFromError(err)
+		if !resolved {
+			exitCode = -1
+		}
+		informational := err != nil && resolved && ctx.Err() == nil && a.IsSuccessExitCode(exitCode)
+		if err != nil || exitCode != 0 {
+			redactionEnv := append(os.Environ(), env...)
+			detailErr := ""
+			if err != nil {
+				detailErr = err.Error()
+			}
+			runDetail = execenv.RedactText(orders.ExecRunDetail{
+				Command:  a.Exec,
+				ExitCode: exitCode,
+				Err:      detailErr,
+				Output:   output,
+			}.String(), redactionEnv)
+		}
+		switch {
+		case informational:
+			// The command's contract reserves this code for "I ran, and here
+			// is what I found". Leaving execErrMsg empty records a completed
+			// run, so a real failure stays distinguishable from a healthy
+			// informational one; the findings themselves reach the tracking
+			// bead via runDetail.
+			logDispatchError(m.stderr, "gc: order exec %s exited %d (declared informational by success_exit_codes)", scoped, exitCode)
+		case err != nil:
 			redactionEnv := append(os.Environ(), env...)
 			execErrMsg = execenv.RedactText(err.Error(), redactionEnv)
 			outcome = orders.RunOutcomeExecFailed
@@ -1379,6 +1415,13 @@ func (m *memoryOrderDispatcher) dispatchExec(ctx context.Context, front *orders.
 				logDispatchError(m.stderr, "gc: order exec %s output: %s", scoped, execenv.RedactText(string(output), redactionEnv))
 			}
 		}
+	}
+
+	// Persist the run's diagnostic detail before the outcome label. A detail
+	// write that fails must not cost us the outcome stamp, so it is logged and
+	// the dispatch continues.
+	if err := front.SetDetail(trackingID, runDetail); err != nil {
+		logDispatchError(m.stderr, "gc: order %s: failed to record exec detail on tracking bead %s: %v", scoped, trackingID, err)
 	}
 
 	// Label tracking bead with outcome via store (not CLI). For event execs,
@@ -1401,6 +1444,12 @@ func (m *memoryOrderDispatcher) dispatchExec(ctx context.Context, front *orders.
 		if hasEventCursor {
 			execErrMsg = fmt.Sprintf("seq=%d: %s", headSeq, execErrMsg)
 		}
+		// Keep the short reason on the first line — readers and greps have
+		// always found it there — and append the detail block beneath it, so
+		// the event alone answers why the order failed.
+		if runDetail != "" {
+			execErrMsg = execErrMsg + "\n" + runDetail
+		}
 		m.rec.Record(events.Event{
 			Type:    events.OrderFailed,
 			Actor:   "controller",
@@ -1413,6 +1462,7 @@ func (m *memoryOrderDispatcher) dispatchExec(ctx context.Context, front *orders.
 		Type:    events.OrderCompleted,
 		Actor:   "controller",
 		Subject: scoped,
+		Message: runDetail,
 	})
 }
 

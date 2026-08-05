@@ -276,6 +276,21 @@ func (s *Store) SetOutcome(runID string, outcome RunOutcome) error {
 	return nil
 }
 
+// SetDetail stores an order run's diagnostic detail on its tracking bead's
+// description — what ran, how it exited, and a bounded tail of what it said.
+// Without it a tracking bead records only the outcome label, so diagnosing a
+// failed scheduled order means catching the next failure live. An empty detail
+// is a no-op so routine successes do not rewrite every tracking bead.
+func (s *Store) SetDetail(runID, detail string) error {
+	if detail == "" {
+		return nil
+	}
+	if err := s.store.Update(runID, beads.UpdateOpts{Description: &detail}); err != nil {
+		return fmt.Errorf("setting order run detail on %q: %w", runID, err)
+	}
+	return nil
+}
+
 // SetCursor stamps the event cursor as the label pair (order:<scoped>,
 // seq:<N>) on an existing tracking bead. Replaces the cursor-persist Update
 // sites in order_dispatch.go.
