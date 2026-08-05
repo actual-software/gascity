@@ -224,6 +224,35 @@ The rules:
   handy for tuning thresholds without editing it. `env` is exec-only.
 - Default timeout is 30s for formula orders, 300s for exec orders.
 
+## Informational exit codes
+
+An exec order succeeds on exit 0 and fails on anything else. That is the right
+default, but plenty of useful scripts reserve a low non-zero code to report a
+finding rather than an error — a drift detector that exits 1 when it found
+drift, having already filed it. Recording every such run as a failure makes an
+order with a 100% failure rate indistinguishable from a perfectly healthy one,
+which is exactly the state a real breakage then hides in.
+
+List those codes and they are recorded as completed runs:
+
+```toml
+[order]
+description = "Report branch-protection drift"
+trigger = "cron"
+schedule = "0 10 * * *"
+exec = "scripts/branch_protection.py"
+success_exit_codes = [1]   # 1 = drift detected and reported; 10..16 = real failures
+```
+
+The rules:
+
+- `success_exit_codes` is exec-only, and each entry is between 1 and 255.
+- Exit 0 always succeeds. Listing it is an error, not a redundancy.
+- Anything not listed still fails. Above, exit 10 is a real failure and is
+  recorded as one.
+- The run's output is stored either way (see [Order history](#order-history)),
+  so an informational run keeps its findings.
+
 ## Timeouts
 
 Each order can set a timeout:
@@ -377,6 +406,25 @@ The tracking bead is created synchronously _before_ the dispatch goroutine
 launches — which is what keeps the cooldown trigger from re-firing on the very
 next tick. The trigger checks for recent tracking beads when deciding if the
 order is due.
+
+When an exec order's command exits non-zero, its tracking bead's description
+records what ran, how it exited, and the last 2 KiB of the command's combined
+stdout and stderr, redacted through the same env redactor the logs use. The
+same detail is appended to the `order.failed` event. Read it with `bd show
+<bead>`:
+
+```
+exec: scripts/preflight.sh
+exit status: 127
+error: exit status 127
+output (48 bytes):
+scripts/preflight.sh: gc: unknown command "doctor"
+```
+
+Without it a failed order records only *that* it failed, and diagnosing one
+means waiting to catch the next failure live. A routine exit-0 run writes no
+description — there is nothing to diagnose, and a busy city accumulates tens of
+thousands of tracking beads.
 
 ## Duplicate prevention
 

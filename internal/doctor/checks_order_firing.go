@@ -127,6 +127,16 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 		result.Message = fmt.Sprintf("read order firing events: %v", err)
 		return result
 	}
+	// Firing is not succeeding. An order that fires on schedule and exits
+	// non-zero every time leaves a perfect order.fired trail, so the outcome
+	// events are the only signal that separates "the controller dispatched it"
+	// from "the scheduled work actually happened".
+	completedAt, failedAt, err := latestOrderOutcomes(eventPath)
+	if err != nil {
+		result.Status = StatusError
+		result.Message = fmt.Sprintf("read order outcome events: %v", err)
+		return result
+	}
 	startedAt, err := latestControllerStartedAt(eventPath)
 	if err != nil {
 		result.Status = StatusError
@@ -145,6 +155,9 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 	// Track severity contributions across error-level entries. Warnings should
 	// stay visible without converting an advisory error into a blocking gate.
 	var blockingErrors, advisoryErrors int
+	// Counted separately so the summary line can say which of the two failure
+	// modes it found: nothing fired, or things fired and did not succeed.
+	var firingErrors, succeedingErrors int
 	suspendedRigs := orderFiringCurrentSuspendedRigs(c.cfg)
 
 	for _, order := range allOrders {
@@ -183,12 +196,35 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 				firstNonOK = orderHistoryHintTarget(order)
 			}
 			if status == StatusError {
+				firingErrors++
 				if severity == SeverityBlocking {
 					blockingErrors++
 				} else {
 					advisoryErrors++
 				}
 			}
+		}
+
+		scoped := order.ScopedName()
+		successStatus, successDetail := classifyOrderSucceeding(order, now, expected, completedAt[scoped], failedAt[scoped])
+		if successDetail == "" {
+			continue
+		}
+		worst = worseStatus(worst, successStatus)
+		result.Details = append(result.Details, successDetail)
+		if successStatus == StatusOK {
+			continue
+		}
+		if firstNonOK == "" {
+			firstNonOK = orderHistoryHintTarget(order)
+		}
+		if successStatus == StatusError {
+			// Advisory, not blocking. An order that has been failing quietly
+			// for weeks is exactly what this signal exists to surface, and
+			// turning that history into a blocking gate the moment the check
+			// ships would wedge the city instead of informing its operator.
+			succeedingErrors++
+			advisoryErrors++
 		}
 	}
 
@@ -206,6 +242,9 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 		result.Message = "scheduled orders are overdue"
 	case StatusError:
 		result.Message = "scheduled orders are stale"
+		if firingErrors == 0 && succeedingErrors > 0 {
+			result.Message = "scheduled orders are firing but not succeeding"
+		}
 	}
 	if blockingErrors == 0 && advisoryErrors > 0 {
 		result.Severity = SeverityAdvisory
@@ -579,6 +618,67 @@ func (c *OrderFiringCurrentCheck) latestOrderFiredAt(evts []events.Event, order 
 		return runAt, nil
 	}
 	return latest, nil
+}
+
+// latestOrderOutcomes returns, per scoped order name, the newest order.completed
+// and order.failed timestamps in the event log. Absence from either map means
+// no outcome of that kind was ever recorded for the order.
+func latestOrderOutcomes(eventPath string) (completed, failed map[string]time.Time, err error) {
+	completed, err = latestEventTimesBySubject(eventPath, events.OrderCompleted)
+	if err != nil {
+		return nil, nil, err
+	}
+	failed, err = latestEventTimesBySubject(eventPath, events.OrderFailed)
+	if err != nil {
+		return nil, nil, err
+	}
+	return completed, failed, nil
+}
+
+func latestEventTimesBySubject(eventPath, eventType string) (map[string]time.Time, error) {
+	evts, err := events.ReadFiltered(eventPath, events.Filter{Type: eventType})
+	if err != nil {
+		return nil, err
+	}
+	latest := make(map[string]time.Time, len(evts))
+	for _, event := range evts {
+		if event.Subject == "" {
+			continue
+		}
+		if event.Ts.After(latest[event.Subject]) {
+			latest[event.Subject] = event.Ts
+		}
+	}
+	return latest, nil
+}
+
+// classifyOrderSucceeding reports whether an order's runs are reaching a
+// successful outcome, which is a different question from whether the
+// controller is dispatching them on schedule. An empty detail means the check
+// has nothing to say: the order has no recorded outcome either way, so its
+// success state is unknown rather than bad.
+//
+// Unlike the firing classification there is no manual-run fallback here. The
+// outcome events are the only success signal, so an order whose history
+// predates them stays silent instead of being reported as never succeeding.
+func classifyOrderSucceeding(order orders.Order, now time.Time, expected time.Duration, lastSucceeded, lastFailed time.Time) (CheckStatus, string) {
+	name := orderDisplayName(order)
+	if lastSucceeded.IsZero() && lastFailed.IsZero() {
+		return StatusOK, ""
+	}
+	if lastSucceeded.IsZero() {
+		return StatusError, fmt.Sprintf("%s: has never succeeded (last failed %s ago)", name, formatOrderFiringDuration(nonNegativeDuration(now.Sub(lastFailed))))
+	}
+
+	age := nonNegativeDuration(now.Sub(lastSucceeded))
+	switch {
+	case age >= expected*3:
+		return StatusError, fmt.Sprintf("%s: last succeeded %s ago, expected every %s (CRITICAL: firing but not succeeding)", name, formatOrderFiringDuration(age), formatOrderFiringDuration(expected))
+	case age >= expected+expected/2:
+		return StatusWarning, fmt.Sprintf("%s: last succeeded %s ago, expected every %s (overdue)", name, formatOrderFiringDuration(age), formatOrderFiringDuration(expected))
+	default:
+		return StatusOK, fmt.Sprintf("%s: last succeeded %s ago", name, formatOrderFiringDuration(age))
+	}
 }
 
 func latestOrderFiredAt(evts []events.Event, subject string) time.Time {

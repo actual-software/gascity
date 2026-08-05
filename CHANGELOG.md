@@ -21,8 +21,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   store "X" has no configured control-dispatcher for its store scope` to name
   the missing scope.
 
+### Added
+
+- **Exec orders can declare informational exit codes.** A script whose
+  documented contract reserves a low non-zero code for a finding rather than an
+  error — a drift detector that exits 1 when it found drift, having already
+  reported it — was recorded as `order.failed` on every run, which made an order
+  with a 100% failure rate indistinguishable from a healthy one. Listing those
+  codes in `success_exit_codes = [1]` records such runs as completed. The key is
+  exec-only, entries must be between 1 and 255, and listing 0 is rejected as
+  redundant. Anything not listed still fails.
+
 ### Fixed
 
+- **A failed exec order now records why it failed.** `order.failed` carried the
+  bare error (`exit status 1`) and an empty payload, and the run's tracking bead
+  carried only an outcome label, so diagnosing a failed scheduled order meant
+  catching the next failure live. Both now carry the resolved exec string, the
+  exit status, and the last 2 KiB of the command's combined stdout and stderr,
+  redacted through the same env redactor the dispatch logs use. A routine exit-0
+  run still writes no description, so a busy city's tracking beads do not grow.
+- **`gc doctor` distinguishes an order that fired from one that succeeded.** The
+  `order-firing-current` check read only `order.fired`, so an order firing
+  exactly on schedule and failing every time reported green. It now reads
+  `order.completed` and `order.failed` too, and reports last-succeeded alongside
+  last-fired. The new signal is advisory rather than blocking, so a city whose
+  orders have been failing quietly is informed rather than gated; an order with
+  no recorded outcome either way stays silent instead of being reported as never
+  having succeeded.
 - **Attempt/fanout control routing no longer fails closed on a transient
   route-config load.** The store-scoped dispatcher routing made attempt-spawn
   (`spawnNextAttempt`) and fanout (`routeFanoutFragmentSteps`) control routing
