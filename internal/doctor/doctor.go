@@ -28,9 +28,15 @@ type Report struct {
 	// Fixed is the number of checks remediated by --fix.
 	Fixed int
 	// Skipped is the number of check groups that never ran, as reported by
-	// SkippedCheck. These are also counted in Failed and BlockingFailed —
-	// a group gc could not inspect gates the exit code the same way a
-	// failing check does.
+	// SkippedCheck. While the cause is unresolved such a group is also
+	// counted in Failed and BlockingFailed, so it gates the exit code the
+	// same way a failing check does.
+	//
+	// The exception is a group whose cause was repaired earlier in the same
+	// --fix run: SkippedCheck downgrades that to a warning, so it counts in
+	// Warned instead and does not gate the exit code. Automation must not
+	// read Skipped > 0 as implying BlockingFailed > 0. Either way the group
+	// did not run, so it is always counted here.
 	Skipped int
 	// Results holds the per-check results in the order they ran. Populated
 	// by Run so callers that need structured output (e.g. `gc doctor --json`)
