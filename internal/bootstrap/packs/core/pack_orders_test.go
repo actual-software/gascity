@@ -302,12 +302,18 @@ func TestWispCompactScriptContract(t *testing.T) {
 	// which is exactly how the `--from-file` assertion first shipped vacuous.
 	code := shellCodeOnly(string(data))
 
+	// Each element pins a load-bearing CONSTRUCT, not merely a name. Stripping
+	// comments is not sufficient on its own: a knob's name also appears inside
+	// the operator-facing error message that tells the reader how to set it, so
+	// asserting the bare name lets that message satisfy the requirement after
+	// the guard it describes has been deleted. Assert the expansion form, which
+	// only the guard can produce.
 	for _, want := range []string{
 		"gc bd query --json 'ephemeral=true'", // the only enumeration that returns wisps
 		"--limit 0",                           // no silent truncation of the backlog
 		"--from-file",                         // batched delete, not one gc bd call per bead
-		"GC_WISP_COMPACT_BUDGET",              // per-run wall-clock bound
-		"GC_WISP_COMPACT_ALLOW_EMPTY",         // documented opt-out for a genuinely empty city
+		"${GC_WISP_COMPACT_BUDGET:-",          // per-run wall-clock bound, read not just named
+		"${GC_WISP_COMPACT_ALLOW_EMPTY:-",     // the opt-out guard itself, not its error text
 	} {
 		if !strings.Contains(code, want) {
 			t.Errorf("wisp-compact.sh missing load-bearing element %q", want)
@@ -338,7 +344,15 @@ func TestWispCompactScriptContract(t *testing.T) {
 
 	// Deletion scope: a non-closed wisp past TTL is promoted for stuck
 	// detection, never deleted. Widening this would delete live work.
-	if !strings.Contains(code, `$b.status != "closed"`) {
+	//
+	// Pin the PROMOTE-branch disjunct specifically. `$b.status != "closed"`
+	// on its own also occurs in the reason ternary immediately below the
+	// guard, which merely selects the wording of the promotion comment — so
+	// the bare substring stays present after the guard is removed, and the
+	// assertion survives its own defect. Deleting the disjunct flips every
+	// open-past-TTL wisp from promoted to deleted, which is the one scope
+	// widening this order must never make.
+	if !strings.Contains(code, `or ($b.status != "closed") then`) {
 		t.Error("wisp-compact.sh must promote non-closed wisps past TTL rather than delete them (stuck detection)")
 	}
 }
