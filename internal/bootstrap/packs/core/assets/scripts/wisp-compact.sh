@@ -89,6 +89,12 @@ if ! printf '%s' "$EPHEMERALS" | jq -r --argjson now "$NOW" '
 
     [ .[]
       | . as $b
+      # Defensive, and deliberately NOT `== true`. The query already filters
+      # server-side, so this only guards a stray non-ephemeral row. Testing
+      # `!= false` keeps a bead whose `ephemeral` field is absent, where
+      # `== true` would silently drop every row the moment a projection stops
+      # emitting that field, which is the exact failure this change undoes.
+      | select($b.ephemeral != false)
       | (if ($b.labels | type) == "array" then $b.labels else [] end) as $labels
       | (ttl($labels)) as $ttl
       | (epoch($b.updated_at // $b.created_at)) as $ts
@@ -122,11 +128,17 @@ SKIPPED=$(awk -F'\t' '$1 == "SKIPPED" { print $2 }' "$WORKDIR/plan")
 DELETE_TOTAL=$(wc -l < "$WORKDIR/delete-ids" | tr -d ' ')
 PROMOTE_TOTAL=$(wc -l < "$WORKDIR/promote" | tr -d ' ')
 
-# An empty ephemeral set is loud unless the operator opts out. A city running
+# An empty ENUMERATION is loud unless the operator opts out. A city running
 # exec orders always holds at least the order-tracking wisp for the dispatch
-# that invoked this script, so zero here means the enumeration stopped seeing
-# wisps — the failure that masked itself as a healthy sweep for two days.
-if [ "$SKIPPED" -eq 0 ] && [ "$DELETE_TOTAL" -eq 0 ] && [ "$PROMOTE_TOTAL" -eq 0 ]; then
+# that invoked this script, so zero rows means the query stopped seeing wisps,
+# the failure that masked itself as a healthy sweep for two days.
+#
+# The test is on the raw row count, NOT on how many beads turned out to be
+# actionable. A sweep that legitimately finds every wisp still inside its TTL
+# has nothing to do and should stay quiet; a sweep that cannot see wisps at all
+# is broken. Conflating the two would make the quiet-and-correct case shout.
+RAW_COUNT=$(printf '%s' "$EPHEMERALS" | jq 'length' 2>/dev/null || echo 0)
+if [ "${RAW_COUNT:-0}" -eq 0 ]; then
     if [ "${GC_WISP_COMPACT_ALLOW_EMPTY:-}" = "1" ]; then
         exit 0
     fi

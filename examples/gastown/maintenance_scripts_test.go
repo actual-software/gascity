@@ -10426,10 +10426,20 @@ func TestPruneBranchesNoOpWhenNoGcBranches(t *testing.T) {
 const wispTimestampLayout = "2006-01-02T15:04:05"
 
 // wispCompactEnv installs a `bd` stub that returns the supplied beadsJSON on
-// `bd list --json --all -n 0` and logs all other bd subcommands to BD_LOG.
-// BD_LOG is pre-created empty so skip-path tests can still assert on its
-// (empty) contents. TZ=UTC is pinned for cross-platform date parsing — see
-// wispTimestampLayout. jq is whatever is on PATH.
+// `bd query --json ephemeral=true --all --limit 0` and logs all other bd
+// subcommands to BD_LOG. BD_LOG is pre-created empty so skip-path tests can
+// still assert on its (empty) contents. TZ=UTC is pinned for cross-platform
+// date parsing — see wispTimestampLayout. jq is whatever is on PATH.
+//
+// `bd list` is a hard error here, not an alternative source. It excludes
+// ephemeral beads outright and omits the `ephemeral` field from its
+// projection, so a script enumerating through it matches zero wisps forever
+// and still exits 0. Failing the stub is what keeps that regression loud.
+//
+// Deletions arrive batched as `delete --from-file <path> --force`. The stub
+// expands the file into one `delete <id> --force` line per id so the per-bead
+// retention assertions below read the same as they did when the script
+// deleted one bead per call.
 func wispCompactEnv(t *testing.T, beadsJSON string) (bdLog string, env map[string]string) {
 	t.Helper()
 	binDir := t.TempDir()
@@ -10445,21 +10455,44 @@ func wispCompactEnv(t *testing.T, beadsJSON string) (bdLog string, env map[strin
 	// pass because cat would still emit valid JSON.
 	writeExecutable(t, stubPath, fmt.Sprintf(`#!/bin/sh
 case "$1" in
-  list)
+  query)
     case "$*" in
-      *"--json"*"--all"*"-n 0"*)
+      *"--json"*"ephemeral=true"*"--all"*"--limit 0"*)
         cat <<'EOF'
 %s
 EOF
         exit 0
         ;;
       *)
-        echo "bd list called with unexpected args: $*" >&2
+        echo "bd query called with unexpected args: $*" >&2
         exit 2
         ;;
     esac
     ;;
-  update|comment|delete)
+  list)
+    echo "bd list cannot see ephemeral beads; enumerate via bd query ephemeral=true: $*" >&2
+    exit 2
+    ;;
+  delete)
+    from_file=""
+    prev=""
+    for arg in $*; do
+      if [ "$prev" = "--from-file" ]; then
+        from_file="$arg"
+      fi
+      prev="$arg"
+    done
+    if [ -n "$from_file" ]; then
+      while IFS= read -r wisp_id; do
+        [ -z "$wisp_id" ] && continue
+        printf 'delete %%s --force\n' "$wisp_id" >> "$BD_LOG"
+      done < "$from_file"
+    else
+      printf '%%s\n' "$*" >> "$BD_LOG"
+    fi
+    exit 0
+    ;;
+  update|comment)
     printf '%%s\n' "$*" >> "$BD_LOG"
     exit 0
     ;;
@@ -10518,7 +10551,7 @@ func TestWispCompactReportsSummaryForActions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("wisp-compact.sh failed: %v\n%s", err, out)
 	}
-	if got, want := strings.TrimSpace(string(out)), "wisp-compact: promoted=0 deleted=1 skipped=1"; got != want {
+	if got, want := strings.TrimSpace(string(out)), "wisp-compact: promoted=0 deleted=1 skipped=1 remaining=0"; got != want {
 		t.Fatalf("summary = %q, want %q", got, want)
 	}
 }
@@ -10812,7 +10845,7 @@ func TestWispCompactReportsNonZeroCounters(t *testing.T) {
 	writeExecutable(t, filepath.Join(binDir, "bd"), fmt.Sprintf(`#!/bin/sh
 printf '%%s\n' "$*" >> "$BD_LOG"
 case "$1 $2" in
-  "list --json")
+  "query --json")
     cat <<'JSON'
 %s
 JSON
@@ -10841,22 +10874,34 @@ exit 0
 	if err != nil {
 		t.Fatalf("ReadFile(bd log): %v", err)
 	}
-	if !strings.Contains(string(logData), "list --json --all -n 0") {
-		t.Fatalf("bd list call not observed:\n%s", logData)
+	if !strings.Contains(string(logData), "query --json ephemeral=true --all --limit 0") {
+		t.Fatalf("bd query enumeration not observed:\n%s", logData)
 	}
 
-	want := "wisp-compact: promoted=1 deleted=2 skipped=1"
+	want := "wisp-compact: promoted=1 deleted=2 skipped=1 remaining=0"
 	if !strings.Contains(string(out), want) {
 		t.Fatalf("wisp-compact summary missing or wrong (subshell counter regression?)\nwant substring: %q\ngot output:\n%s", want, out)
 	}
 }
 
-func TestWispCompactBSDDateZFallbackUsesUTC(t *testing.T) {
+func TestWispCompactZTimestampsAreReadAsUTCNotLocal(t *testing.T) {
 	cityDir := t.TempDir()
 	binDir := t.TempDir()
 	bdLog := filepath.Join(t.TempDir(), "bd.log")
 	dateLog := filepath.Join(t.TempDir(), "date.log")
 
+	// 2033-05-17T20:33:20Z is epoch 1999974800, exactly 7h before the stubbed
+	// "now" of 2000000000. The heartbeat TTL is 6h, so read as UTC this bead is
+	// past TTL and (being open) gets promoted. Read as local under the
+	// America/Los_Angeles offset below it would land exactly on "now", inside
+	// TTL, and be skipped instead. The summary therefore discriminates the two
+	// readings on its own, which is what this test is for.
+	//
+	// The script no longer shells out to `date` per bead — jq's
+	// fromdateiso8601 does the parsing, and it is UTC by construction. The
+	// date stub is kept to pin "now" deterministically, and the assertion on
+	// its log now checks the opposite of what it used to: that there is no
+	// per-bead date fan-out left to pay for.
 	nearBoundary := "2033-05-17T20:33:20Z"
 	beadsJSON := fmt.Sprintf(`[
   {"id":"ga-heartbeat","status":"open","ephemeral":true,"updated_at":"%s","comment_count":0,"labels":["wisp_type:heartbeat"]}
@@ -10865,7 +10910,7 @@ func TestWispCompactBSDDateZFallbackUsesUTC(t *testing.T) {
 	writeExecutable(t, filepath.Join(binDir, "bd"), fmt.Sprintf(`#!/bin/sh
 printf '%%s\n' "$*" >> "$BD_LOG"
 case "$1 $2" in
-  "list --json")
+  "query --json")
     cat <<'JSON'
 %s
 JSON
@@ -10875,25 +10920,14 @@ exit 0
 `, beadsJSON))
 	writeMaintenanceGCStub(t, filepath.Join(binDir, "gc"), "#!/bin/sh\nexit 0\n")
 
-	writeExecutable(t, filepath.Join(binDir, "date"), fmt.Sprintf(`#!/bin/sh
-printf '%%s\n' "$*" >> "$DATE_LOG"
-if [ "$1" = "+%%s" ]; then
-  echo 2000000000
-  exit 0
-fi
-if [ "$1" = "-d" ]; then
-  exit 1
-fi
-if [ "$1" = "-ju" ] && [ "$2" = "-f" ] && [ "$4" = "%s" ]; then
-  echo 1999974800
-  exit 0
-fi
-if [ "$1" = "-j" ] && [ "$2" = "-f" ] && [ "$4" = "%s" ]; then
-  echo 2000000000
-  exit 0
-fi
+	writeExecutable(t, filepath.Join(binDir, "date"), `#!/bin/sh
+printf '%s\n' "$*" >> "$DATE_LOG"
+case "$*" in
+  "-u +%s") echo 2000000000; exit 0 ;;
+  "+%s")    echo 2000000000; exit 0 ;;
+esac
 exit 1
-`, nearBoundary, nearBoundary))
+`)
 
 	env := map[string]string{
 		"BD_LOG":       bdLog,
@@ -10914,23 +10948,20 @@ exit 1
 
 	want := "wisp-compact: promoted=1 deleted=0 skipped=0"
 	if !strings.Contains(string(out), want) {
-		t.Fatalf("wisp-compact should parse BSD Z timestamps as UTC at the heartbeat TTL boundary\nwant substring: %q\ngot output:\n%s", want, out)
+		t.Fatalf("wisp-compact must read a trailing-Z timestamp as UTC at the heartbeat TTL boundary, not in $TZ\nwant substring: %q\ngot output:\n%s", want, out)
 	}
 
+	// Timestamp parsing moved into the single jq classification pass, so the
+	// only `date` calls left are the ones bounding the run. Anything that
+	// scales with the bead count is the per-bead fan-out coming back.
 	dateData, err := os.ReadFile(dateLog)
 	if err != nil {
 		t.Fatalf("ReadFile(date log): %v", err)
 	}
-	if !strings.Contains(string(dateData), "-ju -f %Y-%m-%dT%H:%M:%SZ "+nearBoundary+" +%s") {
-		t.Fatalf("BSD Z fallback did not force UTC:\n%s", dateData)
-	}
-
-	bdData, err := os.ReadFile(bdLog)
-	if err != nil {
-		t.Fatalf("ReadFile(bd log): %v", err)
-	}
-	if !strings.Contains(string(bdData), "update ga-heartbeat --persistent") {
-		t.Fatalf("expected expired heartbeat to be promoted, got bd calls:\n%s", bdData)
+	for _, banned := range []string{"-ju -f", "-j -f", "-d " + nearBoundary} {
+		if strings.Contains(string(dateData), banned) {
+			t.Fatalf("timestamp parsing must run in jq, not a per-bead `date %s` call:\n%s", banned, dateData)
+		}
 	}
 }
 
