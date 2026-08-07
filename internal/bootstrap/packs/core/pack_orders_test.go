@@ -2,6 +2,7 @@ package core
 
 import (
 	"io/fs"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -335,11 +336,42 @@ func TestWispCompactScriptContract(t *testing.T) {
 	// Loud-fail: the controller logs an exec order's output only on a non-zero
 	// exit, so a swallowed enumeration failure is invisible. `|| exit 0` after
 	// the enumeration is the specific construct that hid the original.
-	if !strings.Contains(code, "enumerating ephemeral beads failed") {
-		t.Error("wisp-compact.sh must surface an enumeration failure to stderr and exit non-zero (loud-fail #4543)")
+	//
+	// Pin the message AND the non-zero exit beneath it, not the message alone.
+	// The exit is the load-bearing half: the message is only ever read because
+	// a non-zero status made the controller log it, so a message with no exit
+	// behind it is written to a stream nobody reads. Asserting the text on its
+	// own is vacuous in the same way the opt-out and deletion-scope checks
+	// were before they were pinned to their expansion and routing forms —
+	// flipping `exit 1` to `exit 0` is the single likeliest edit if this order
+	// is ever called noisy, and it restores the silent sweep this whole change
+	// exists to remove while leaving every message in place.
+	//
+	// The exit must be the next non-blank line after the message. That is
+	// deliberately strict: inserting a line between them turns this red, which
+	// is the correct failure mode for an assertion whose defect would
+	// otherwise be silence.
+	for _, want := range []struct {
+		re     *regexp.Regexp
+		reason string
+	}{
+		{
+			re:     regexp.MustCompile(`enumerating ephemeral beads failed[^\n]*\n\s*exit\s+[1-9]`),
+			reason: "must surface an enumeration failure to stderr AND exit non-zero (loud-fail #4543)",
+		},
+		{
+			re:     regexp.MustCompile(`could not be actioned[^\n]*\n\s*exit\s+[1-9]`),
+			reason: "must exit non-zero when a wisp could not be actioned, or the loud-fail message is never logged (#4543)",
+		},
+	} {
+		if !want.re.MatchString(code) {
+			t.Errorf("wisp-compact.sh %s", want.reason)
+		}
 	}
+	// Retained alongside the exit pin above: this one guards that the failure
+	// counter is still what gates the loud exit, which the regexp does not say.
 	if !strings.Contains(code, `"$FAILED" -gt 0`) {
-		t.Error("wisp-compact.sh must exit non-zero when a wisp could not be actioned, or the loud-fail message is never logged (#4543)")
+		t.Error("wisp-compact.sh must gate its non-zero exit on the failed-action counter (#4543)")
 	}
 
 	// Deletion scope: a non-closed wisp past TTL is promoted for stuck
