@@ -245,6 +245,104 @@ func assertCooldownExecOrder(t *testing.T, orderFile, scriptBase string) {
 	}
 }
 
+// shellCodeOnly strips the shebang and whole-line `#` comments from a shell
+// script so a "must not contain" assertion tests what the script DOES rather
+// than what its header says about what it used to do.
+func shellCodeOnly(body string) string {
+	var code []string
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		code = append(code, line)
+	}
+	return strings.Join(code, "\n")
+}
+
+// TestWispCompactOrder pins the wisp-compact order's contract: a
+// cooldown-triggered exec order running the wisp-compact script.
+func TestWispCompactOrder(t *testing.T) {
+	assertCooldownExecOrder(t, "wisp-compact.toml", "wisp-compact.sh")
+}
+
+// TestWispCompactScriptContract guards the enumeration and observability
+// contract of the wisp sweep. The regression it exists to prevent ran silently
+// for two days in a live city: the script enumerated with `gc bd list --json
+// --all -n 0` and kept only `select(.ephemeral == true)`, but `bd list`
+// excludes ephemeral beads outright AND omits the `ephemeral` field from its
+// projection, so the filter matched zero records of 33,322 live wisps. The
+// sweep reaped nothing and exited 0, which is indistinguishable from a healthy
+// run — the controller logs an exec order's output only on a NON-ZERO exit
+// (order_dispatch.go), so the summary line never reached the log either.
+//
+//   - Enumeration MUST go through `gc bd query ephemeral=true`, the only
+//     listing that returns wisps, with `--limit 0` so a large backlog is not
+//     silently truncated to the default page.
+//   - `bd list` MUST NOT be the enumeration source, and the
+//     `select(.ephemeral == true)` filter it fed must not come back.
+//   - Loud-fail (#4543): an enumeration failure, an empty result, and a failed
+//     action must each exit non-zero, or the failure is swallowed exactly the
+//     way the original was.
+//   - Deletion MUST be batched via `--from-file`: each `gc bd` invocation costs
+//     about a second of process startup, so one call per bead put the sweep
+//     past its 300s deadline once the backlog grew.
+//   - The run MUST be bounded by a wall-clock budget, so a backlog larger than
+//     one run drains across sweeps instead of dying at the deadline.
+//   - Deletion scope stays closed-only: a non-closed wisp past TTL is promoted
+//     for stuck detection, never deleted.
+func TestWispCompactScriptContract(t *testing.T) {
+	data, err := fs.ReadFile(PackFS, "assets/scripts/wisp-compact.sh")
+	if err != nil {
+		t.Fatalf("reading wisp-compact.sh: %v", err)
+	}
+	// Every assertion runs against executable lines only. The script's header
+	// documents the defect and names each knob in prose, so testing the raw
+	// body would let a comment satisfy a requirement the code no longer meets —
+	// which is exactly how the `--from-file` assertion first shipped vacuous.
+	code := shellCodeOnly(string(data))
+
+	for _, want := range []string{
+		"gc bd query --json 'ephemeral=true'", // the only enumeration that returns wisps
+		"--limit 0",                           // no silent truncation of the backlog
+		"--from-file",                         // batched delete, not one gc bd call per bead
+		"GC_WISP_COMPACT_BUDGET",              // per-run wall-clock bound
+		"GC_WISP_COMPACT_ALLOW_EMPTY",         // documented opt-out for a genuinely empty city
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("wisp-compact.sh missing load-bearing element %q", want)
+		}
+	}
+
+	// The exact enumeration that made the sweep a silent no-op. `bd list` does
+	// not return ephemeral beads and does not carry the field the filter tests,
+	// so either half coming back reintroduces the regression. Checked against
+	// executable lines only: the script's own header explains the defect in
+	// prose, and documenting it must not read as committing it.
+	if strings.Contains(code, "bd list") {
+		t.Error("wisp-compact.sh must not enumerate via `bd list`: it excludes ephemeral beads and omits the ephemeral field, so the sweep silently matches nothing")
+	}
+	if strings.Contains(code, "select(.ephemeral == true)") {
+		t.Error("wisp-compact.sh must not filter a list projection on .ephemeral: the field is absent from `bd list` output, so the filter always matches zero beads")
+	}
+
+	// Loud-fail: the controller logs an exec order's output only on a non-zero
+	// exit, so a swallowed enumeration failure is invisible. `|| exit 0` after
+	// the enumeration is the specific construct that hid the original.
+	if !strings.Contains(code, "enumerating ephemeral beads failed") {
+		t.Error("wisp-compact.sh must surface an enumeration failure to stderr and exit non-zero (loud-fail #4543)")
+	}
+	if !strings.Contains(code, `"$FAILED" -gt 0`) {
+		t.Error("wisp-compact.sh must exit non-zero when a wisp could not be actioned, or the loud-fail message is never logged (#4543)")
+	}
+
+	// Deletion scope: a non-closed wisp past TTL is promoted for stuck
+	// detection, never deleted. Widening this would delete live work.
+	if !strings.Contains(code, `$b.status != "closed"`) {
+		t.Error("wisp-compact.sh must promote non-closed wisps past TTL rather than delete them (stuck detection)")
+	}
+}
+
 // TestRenudgeStaleHumanGatesOrder pins the staleness-sweep order's contract: it
 // is a cooldown-triggered exec order running the renudge-stale-human-gates
 // script. It is the repeating companion to notify-on-human-gate-creation (which
