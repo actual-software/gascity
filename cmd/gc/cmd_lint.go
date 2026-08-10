@@ -436,6 +436,7 @@ func lintPromptContext(packDir string, agentCfg config.Agent, providers map[stri
 		SlingQuery:              agentCfg.EffectiveSlingQuery(),
 		ProviderKey:             providerKey,
 		ProviderDisplayName:     providerDisplayNameFor(providerKey, providers),
+		ConfigDir:               promptConfigDir(packDir, agentCfg.SourceDir),
 		Env:                     env,
 	}
 }

@@ -369,6 +369,7 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 		ProviderKey:             providerKey,
 		ProviderDisplayName:     providerDisplayName,
 		InstructionsFile:        instructionsFileForAgent(cfgAgent, p.workspace, p.providers),
+		ConfigDir:               promptConfigDir(p.cityPath, cfgAgent.SourceDir),
 		Env:                     cfgAgent.Env,
 	}, p.sessionTemplate, p.stderr, packDirs, fragments, p.beadStore)
 	hasHooks := config.AgentHasHooks(cfgAgent, p.workspace, resolved.Name, p.providers)
@@ -499,11 +500,10 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 	// re-enable product metrics; Beads telemetry remains independent.
 	env[execenv.UsageMetricsDisableEnv] = execenv.UsageMetricsDisableValue
 
-	// Step 11: Expand session setup templates.
-	configDir := p.cityPath
-	if cfgAgent.SourceDir != "" {
-		configDir = cfgAgent.SourceDir
-	}
+	// Step 11: Expand session setup templates. ConfigDir comes from the same
+	// helper the prompt context uses, so {{.ConfigDir}} resolves identically in a
+	// prompt and in a session-setup command and the two scopes cannot drift.
+	configDir := promptConfigDir(p.cityPath, cfgAgent.SourceDir)
 	setupCtx := SessionSetupContext{
 		Session:   sessName,
 		Agent:     qualifiedName,
