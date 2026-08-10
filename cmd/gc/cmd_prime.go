@@ -765,6 +765,7 @@ func buildPrimeContextForBeads(cityPath, cityName string, a *config.Agent, rigs 
 		TemplateName:  a.Name,
 		BindingName:   a.BindingName,
 		BindingPrefix: a.BindingPrefix(),
+		ConfigDir:     promptConfigDir(cityPath, a.SourceDir),
 		Env:           a.Env,
 	}
 

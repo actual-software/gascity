@@ -324,6 +324,53 @@ func TestRenderPromptEnvMerge(t *testing.T) {
 	}
 }
 
+// TestRenderPromptConfigDir covers the shape that regressed: a pack ships helper
+// scripts under assets/scripts/ and its prompts reach them via {{ .ConfigDir }}.
+// Before ConfigDir was wired into the prompt context, the key was absent from the
+// template data map and missingkey=zero rendered it as "", turning every such
+// invocation into a bare /assets/scripts/... path that exits 127.
+func TestRenderPromptConfigDir(t *testing.T) {
+	f := fsys.NewFake()
+	f.Files["/city/prompts/test.template.md"] = []byte("{{ .ConfigDir }}/assets/scripts/slack.py send hi")
+	ctx := PromptContext{
+		CityRoot:  "/home/user/my-city",
+		ConfigDir: "/home/user/packs/local-core",
+	}
+	got := renderPrompt(f, "/city", "", "prompts/test.template.md", ctx, "", io.Discard, nil, nil, nil)
+	want := "/home/user/packs/local-core/assets/scripts/slack.py send hi"
+	if got != want {
+		t.Errorf("renderPrompt(ConfigDir) = %q, want %q", got, want)
+	}
+}
+
+func TestPromptConfigDir(t *testing.T) {
+	tests := []struct {
+		name      string
+		cityPath  string
+		sourceDir string
+		want      string
+	}{
+		{
+			name:      "pack-supplied agent uses its pack dir",
+			cityPath:  "/home/user/my-city",
+			sourceDir: "/home/user/packs/local-core",
+			want:      "/home/user/packs/local-core",
+		},
+		{
+			name:     "city-defined agent falls back to the city root",
+			cityPath: "/home/user/my-city",
+			want:     "/home/user/my-city",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := promptConfigDir(tt.cityPath, tt.sourceDir); got != tt.want {
+				t.Errorf("promptConfigDir(%q, %q) = %q, want %q", tt.cityPath, tt.sourceDir, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRenderPromptDefaultBranch(t *testing.T) {
 	f := fsys.NewFake()
 	f.Files["/city/prompts/test.md.tmpl"] = []byte("Branch: {{ .DefaultBranch }}")

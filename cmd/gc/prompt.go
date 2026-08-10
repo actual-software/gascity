@@ -57,7 +57,26 @@ type PromptContext struct {
 	// Templates use {{ .InstructionsFile }} as a provider-aware fallback when
 	// pack-specific guidance (e.g. quality-gate commands) is missing or empty.
 	InstructionsFile string
-	Env              map[string]string // from Agent.Env — custom vars
+	// ConfigDir is the directory this agent's config was defined in — the pack
+	// directory for a pack-supplied agent, the city root otherwise. Prompts use
+	// {{ .ConfigDir }} to reach assets the pack ships alongside the agent, most
+	// often helper scripts under {{ .ConfigDir }}/assets/scripts/. It carries the
+	// same value SessionSetupContext carries for command / pre_start /
+	// session_live expansion, so the variable means the same thing in a prompt as
+	// it does in a session-setup command.
+	ConfigDir string
+	Env       map[string]string // from Agent.Env — custom vars
+}
+
+// promptConfigDir resolves the ConfigDir for a prompt: the directory the agent's
+// config was defined in, falling back to the city root when the agent is defined
+// by the city itself rather than by an imported pack. Mirrors the fallback
+// resolveTemplate applies when building SessionSetupContext.
+func promptConfigDir(cityPath, sourceDir string) string {
+	if sourceDir != "" {
+		return sourceDir
+	}
+	return cityPath
 }
 
 // PromptRenderResult holds the rendered text plus the version and rendered
@@ -340,6 +359,7 @@ func buildTemplateData(ctx PromptContext) map[string]string {
 	m["ProviderKey"] = ctx.ProviderKey
 	m["ProviderDisplayName"] = ctx.ProviderDisplayName
 	m["InstructionsFile"] = ctx.InstructionsFile
+	m["ConfigDir"] = ctx.ConfigDir
 	return m
 }
 
