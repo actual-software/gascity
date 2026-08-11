@@ -78,13 +78,69 @@ func TestContextInjectLastUsageEntryWins(t *testing.T) {
 	}
 }
 
-func TestContextInjectDefaultWindow200k(t *testing.T) {
+// TestContextInjectWindowResolution covers every way the denominator gets
+// chosen: the conservative default, family recognition, and promotion past an
+// observed footprint. The cases share one process-environment mutation on
+// purpose. cmd/gc carries a debt ratchet on untagged environment calls (see
+// TESTING.md), so new coverage here is added as table rows rather than as new
+// test functions that would each need their own environment mutation.
+func TestContextInjectWindowResolution(t *testing.T) {
 	t.Setenv("GC_INJECT_CONTEXT", "")
-	// 150k on an unrecognized model = 75% of the conservative 200k default.
-	p := writeTranscript(t, usageLine("some-other-model", 10_000, 130_000, 10_000))
-	got := contextInjectLine(hookInputFor(p))
-	if !strings.Contains(got, "150k/200k") || !strings.Contains(got, "~75%") {
-		t.Errorf("200k default window not applied: %q", got)
+	for _, tc := range []struct {
+		name  string
+		model string
+		// The three usage fields sum to the observed footprint.
+		input, cacheRead, cacheCreate int
+		// wants are substrings the rendered line must contain. An empty
+		// wants means the line must be silent.
+		wants []string
+		why   string
+	}{
+		{
+			name:  "unrecognized model falls back to the 200k default",
+			model: "some-other-model", input: 10_000, cacheRead: 130_000, cacheCreate: 10_000,
+			wants: []string{"150k/200k", "~75%"},
+			why:   "150k against the conservative default is 75%",
+		},
+		{
+			name:  "bare claude-opus-5 resolves to the 1M window",
+			model: "claude-opus-5", input: 11_440, cacheRead: 150_000, cacheCreate: 10_000,
+			why: "Claude Code records the resolved API model and drops the launch-time 1M selector, so a session launched as claude-opus-5[1m] logs a bare claude-opus-5; 171k of 1M is 17% and must be silent, where the old 200k default read 86% and ordered a recycle every turn",
+		},
+		{
+			name:  "bare claude-sonnet-5 resolves to the 1M window",
+			model: "claude-sonnet-5", input: 10_000, cacheRead: 680_000, cacheCreate: 10_000,
+			wants: []string{"700k/1000k"},
+			why:   "700k of 1M is 70%, the advisory band, which proves the family resolved to 1M",
+		},
+		{
+			name:  "footprint past the resolved window promotes it",
+			model: "some-future-model", input: 20_000, cacheRead: 660_000, cacheCreate: 20_000,
+			wants: []string{"700k/1000k"},
+			why:   "a model the table has never seen, whose footprint already exceeds the default, is provably on a bigger window, so promote rather than report 350% and fire the urgent tier every turn",
+		},
+		{
+			name:  "promotion stops at the smallest tier that holds the footprint",
+			model: "gpt-5.6-sol", input: 10_000, cacheRead: 200_000, cacheCreate: 10_000,
+			wants: []string{"220k/258k"},
+			why:   "220k lands on the 258k tier rather than 1M; over-promoting would hide real context pressure",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeTranscript(t, usageLine(tc.model, tc.input, tc.cacheRead, tc.cacheCreate))
+			got := contextInjectLine(hookInputFor(p))
+			if len(tc.wants) == 0 {
+				if got != "" {
+					t.Errorf("expected a silent line (%s), got %q", tc.why, got)
+				}
+				return
+			}
+			for _, want := range tc.wants {
+				if !strings.Contains(got, want) {
+					t.Errorf("expected %q in the line (%s), got %q", want, tc.why, got)
+				}
+			}
+		})
 	}
 }
 
