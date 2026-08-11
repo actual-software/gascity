@@ -88,6 +88,53 @@ func TestContextInjectDefaultWindow200k(t *testing.T) {
 	}
 }
 
+func TestContextInjectClaude5WithoutSuffix(t *testing.T) {
+	t.Setenv("GC_INJECT_CONTEXT", "")
+	// Claude Code records the resolved API model on each assistant entry and
+	// drops the launch-time 1M selector, so a session launched as
+	// claude-opus-5[1m] logs a bare "claude-opus-5". 171k of 1M is 17% and
+	// must be silent; against the old 200k default it read as 86% and ordered
+	// a recycle every turn.
+	p := writeTranscript(t, usageLine("claude-opus-5", 11_440, 150_000, 10_000))
+	if got := contextInjectLine(hookInputFor(p)); got != "" {
+		t.Errorf("bare claude-opus-5 must resolve to the 1M window, got %q", got)
+	}
+}
+
+func TestContextInjectSonnet5WithoutSuffix(t *testing.T) {
+	t.Setenv("GC_INJECT_CONTEXT", "")
+	// 700k of 1M = 70%, the advisory band — proves the family resolved to 1M.
+	p := writeTranscript(t, usageLine("claude-sonnet-5", 10_000, 680_000, 10_000))
+	got := contextInjectLine(hookInputFor(p))
+	if !strings.Contains(got, "700k/1000k") {
+		t.Errorf("bare claude-sonnet-5 must resolve to the 1M window, got %q", got)
+	}
+}
+
+func TestContextInjectPromotesWindowPastObservedFootprint(t *testing.T) {
+	t.Setenv("GC_INJECT_CONTEXT", "")
+	// A model the table has never heard of, whose footprint already exceeds
+	// the 200k default: the window is provably wrong, so promote instead of
+	// reporting 350% and firing the urgent tier on every turn.
+	p := writeTranscript(t, usageLine("some-future-model", 20_000, 660_000, 20_000))
+	got := contextInjectLine(hookInputFor(p))
+	if !strings.Contains(got, "700k/1000k") {
+		t.Errorf("footprint past the resolved window must promote it, got %q", got)
+	}
+}
+
+func TestContextInjectPromotesToNextTierNotStraightToMillion(t *testing.T) {
+	t.Setenv("GC_INJECT_CONTEXT", "")
+	// 220k past the 200k default promotes to the smallest tier that can hold
+	// it (258k), not all the way to 1M — an over-promotion would hide real
+	// context pressure.
+	p := writeTranscript(t, usageLine("gpt-5.6-sol", 10_000, 200_000, 10_000))
+	got := contextInjectLine(hookInputFor(p))
+	if !strings.Contains(got, "220k/258k") {
+		t.Errorf("expected promotion to the 258k tier, got %q", got)
+	}
+}
+
 func TestContextInjectWindowOverride(t *testing.T) {
 	t.Setenv("GC_INJECT_CONTEXT", "")
 	t.Setenv("GC_CONTEXT_WINDOW_TOKENS", "500000")

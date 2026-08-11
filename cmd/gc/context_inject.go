@@ -69,7 +69,7 @@ func contextInjectLine(hookInput []byte) string {
 	if !ok {
 		return ""
 	}
-	return contextUsageMessage(tokens, contextWindowTokens(models))
+	return contextUsageMessage(tokens, contextWindowTokens(models, tokens))
 }
 
 // lastTranscriptUsage reads the tail of a provider transcript (JSONL) and
@@ -128,7 +128,17 @@ func lastTranscriptUsage(path string) (tokens int, models []string, ok bool) {
 // can't flip a 1M session to the 200k default and fire the urgent tier at
 // ~20% of real usage. GC_CONTEXT_WINDOW_TOKENS overrides — gc-managed
 // deployments that know the launch model should pin it for determinism.
-func contextWindowTokens(models []string) int {
+//
+// The model string alone is not always enough to tell. Claude Code records the
+// resolved API model on each assistant entry ("claude-opus-5") and drops the
+// launch-time 1M selector, so a session launched as claude-opus-5[1m] carries
+// no [1m] anywhere in its transcript and reads as its family default. observed
+// is the second, evidence-based signal: a footprint that does not fit inside
+// the resolved window is proof the window is wrong, whatever the table
+// believes, so promote to the smallest known window that can hold it. That
+// keeps a model this table has never heard of from pinning a large session
+// above 100% and firing the urgent tier every single turn.
+func contextWindowTokens(models []string, observed int) int {
 	if v := strings.TrimSpace(os.Getenv("GC_CONTEXT_WINDOW_TOKENS")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
@@ -141,20 +151,35 @@ func contextWindowTokens(models []string) int {
 		}
 	}
 	if best == 0 {
-		return 200_000
+		best = 200_000
+	}
+	if observed < best {
+		return best
+	}
+	for _, w := range windowTiers {
+		if w > observed {
+			return w
+		}
 	}
 	return best
 }
 
+// windowTiers are the context-window sizes contextWindowTokens promotes to when
+// a transcript's observed footprint has outgrown the window its model string
+// resolved to, smallest first.
+var windowTiers = []int{200_000, 258_000, 1_000_000}
+
 // classifyWindow maps one model string to its context window. 1M families:
-// Opus 4.6/4.7/4.8, Sonnet 4.6, Fable, Mythos, and an explicit [1m] launch
-// suffix; everything else (Haiku, older models, unrecognized) is a
-// conservative 200k. Kept simple/substring rather than a strict table so a
-// dated-suffix variant still matches; pin GC_CONTEXT_WINDOW_TOKENS when a new
-// model's window isn't yet recognized here.
+// Opus 4.6/4.7/4.8 and Opus 5, Sonnet 4.6 and Sonnet 5, Fable, Mythos, and an
+// explicit [1m] launch suffix; everything else (Haiku, older models,
+// unrecognized) is a conservative 200k. Kept simple/substring rather than a
+// strict table so a dated-suffix variant still matches; pin
+// GC_CONTEXT_WINDOW_TOKENS when a new model's window isn't yet recognized
+// here. A family this table gets wrong is also caught after the fact by
+// contextWindowTokens' observed-footprint promotion.
 func classifyWindow(model string) int {
 	ml := strings.ToLower(model)
-	for _, s := range []string{"[1m]", "fable", "mythos", "opus-4-6", "opus-4-7", "opus-4-8", "sonnet-4-6"} {
+	for _, s := range []string{"[1m]", "fable", "mythos", "opus-4-6", "opus-4-7", "opus-4-8", "opus-5", "sonnet-4-6", "sonnet-5"} {
 		if strings.Contains(ml, s) {
 			return 1_000_000
 		}
