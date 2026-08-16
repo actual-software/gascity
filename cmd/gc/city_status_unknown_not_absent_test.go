@@ -258,6 +258,26 @@ func TestPartialStatusWithEveryAgentObservedRunning(t *testing.T) {
 	}
 }
 
+// TestPublishedCountsAndUnknownAgentsShareOneSource pins unknown_agents to the
+// same summary the payload publishes as running_agents and total_agents. Both
+// production callers pass snapshot.Summary, so this is a fence rather than a
+// live bug: an unknown count that disagrees with the counts printed beside it
+// would reintroduce the self-contradicting output this change exists to remove.
+func TestPublishedCountsAndUnknownAgentsShareOneSource(t *testing.T) {
+	snapshot := fleetSnapshot(0, 15, true, []string{"runtime status probe incomplete"})
+	published := StatusSummaryJSON{TotalAgents: 4, RunningAgents: 1}
+
+	status := cityStatusJSONFromSnapshot(snapshot, published)
+
+	if status.Summary.UnknownAgents != 3 {
+		t.Fatalf("summary.unknown_agents = %d, want 3 — the payload publishes 1 running of 4", status.Summary.UnknownAgents)
+	}
+	if gap := status.Summary.TotalAgents - status.Summary.RunningAgents; gap != status.Summary.UnknownAgents {
+		t.Fatalf("unknown_agents = %d contradicts the counts published beside it (%d total, %d running)",
+			status.Summary.UnknownAgents, status.Summary.TotalAgents, status.Summary.RunningAgents)
+	}
+}
+
 func TestUnknownAgentCount(t *testing.T) {
 	tests := []struct {
 		name    string

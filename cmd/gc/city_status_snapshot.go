@@ -468,11 +468,17 @@ func cityStatusJSONFromSnapshot(snapshot cityStatusSnapshot, summary StatusSumma
 	// dashboards and health checks read, and the natural response to "no
 	// agents running" with queued work is to restart the agents and re-sling
 	// the work, which duplicates builds that are already in flight.
-	unknownAgents := unknownAgentCount(snapshot.Summary.RunningAgents, snapshot.Summary.TotalAgents, snapshot.Partial)
+	// Read the counts off the summary parameter rather than snapshot.Summary:
+	// the parameter is what this payload publishes as running_agents and
+	// total_agents, so a signal or an unknown count derived from the other one
+	// could contradict the numbers printed beside it. Both production callers
+	// pass snapshot.Summary, so this changes nothing today; it keeps all three
+	// values on one source if that ever stops being true.
+	unknownAgents := unknownAgentCount(summary.RunningAgents, summary.TotalAgents, snapshot.Partial)
 	switch {
 	case unknownAgents > 0:
 		signals = append(signals, "agent_state_unknown")
-	case snapshot.Summary.TotalAgents > 0 && snapshot.Summary.RunningAgents == 0:
+	case summary.TotalAgents > 0 && summary.RunningAgents == 0:
 		signals = append(signals, "no_agents_running")
 	}
 	summary.UnknownAgents = unknownAgents
