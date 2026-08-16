@@ -2236,7 +2236,7 @@ type backupsReport struct {
 // server and returns the decoded backups block. The server is deliberately
 // absent: backup freshness is a filesystem measurement, so this exercises it
 // in isolation, and JSON mode always exits 0.
-func runHealthBackupsJSON(t *testing.T, cityPath string, extraEnv ...string) (backupsReport, []byte) {
+func runHealthBackupsJSON(t *testing.T, cityPath string) (backupsReport, []byte) {
 	t.Helper()
 	binDir := t.TempDir()
 	for _, name := range []string{"gc", "lsof", "nc", "dolt"} {
@@ -2253,7 +2253,6 @@ func runHealthBackupsJSON(t *testing.T, cityPath string, extraEnv ...string) (ba
 		"GC_HEALTH_SKIP_ZOMBIE_SCAN=1",
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
-	env = append(env, extraEnv...)
 	out, err := newHealthScriptCmd(root, env, "--json").Output()
 	if err != nil {
 		t.Fatalf("health run.sh --json failed: %v\n%s", err, out)
@@ -2272,7 +2271,7 @@ func runHealthBackupsJSON(t *testing.T, cityPath string, extraEnv ...string) (ba
 // healthy one.
 //
 // The regression: backup_freshness/backup_age_sec/backup_stale were
-// initialised to "", 0 and false, and the block that would overwrite them was
+// initialized to "", 0 and false, and the block that would overwrite them was
 // skipped whenever no backup was found. JSON mode then emitted a confident
 // "dolt_stale": false for a city whose bead store had no backup at all. One
 // city ran 18 hours with a stale backup while this field reported healthy.

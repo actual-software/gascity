@@ -5795,9 +5795,9 @@ func TestCompactScriptSkipFetchRejectsInvalidValue(t *testing.T) {
 // test can assert the retry actually happened rather than inferring it from
 // the outcome. stderr carries the diagnostic a real managed server emits when
 // it ends an operation at its listener read deadline.
-func writeFlakyBackupFakeDolt(t *testing.T, binDir string, failUntil int) (logPath, counterPath string) {
+func writeFlakyBackupFakeDolt(t *testing.T, binDir string, failUntil int) (counterPath string) {
 	t.Helper()
-	logPath = filepath.Join(binDir, "dolt.log")
+	logPath := filepath.Join(binDir, "dolt.log")
 	counterPath = filepath.Join(binDir, "sync-attempts")
 	writeExecutable(t, filepath.Join(binDir, "dolt"), fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
@@ -5828,14 +5828,14 @@ if [ "${1:-} ${2:-}" = "backup sync" ]; then
 fi
 exit 0
 `, shellQuote(logPath), shellQuote(counterPath), shellQuote(counterPath), failUntil))
-	return logPath, counterPath
+	return counterPath
 }
 
 // TestBackupScriptRetriesMarginalSyncFailure pins that a database whose sync
 // fails once is retried rather than abandoned until the next interval.
 //
 // The backup is a marginal operation, not a reliably-fast one: on a busy city
-// the managed sql-server serialises it against live agent traffic, so the same
+// the managed sql-server serializes it against live agent traffic, so the same
 // delta can land either side of the server's read deadline depending on what
 // else is running. One city measured four consecutive scheduled failures at
 // ~30s over twelve hours, then a manual retry that succeeded in 28s against
@@ -5848,7 +5848,7 @@ func TestBackupScriptRetriesMarginalSyncFailure(t *testing.T) {
 	}
 	binDir := t.TempDir()
 	gcLogPath := writeDogFakeGC(t, binDir)
-	_, counterPath := writeFlakyBackupFakeDolt(t, binDir, 1)
+	counterPath := writeFlakyBackupFakeDolt(t, binDir, 1)
 
 	out := runDogScript(t, "mol-dog-backup.sh", binDir, cityPath, dataDir, "GC_BACKUP_DATABASES=prod")
 
@@ -5887,7 +5887,7 @@ func TestBackupScriptSurfacesSyncDiagnosticInEscalation(t *testing.T) {
 	binDir := t.TempDir()
 	gcLogPath := writeDogFakeGC(t, binDir)
 	// failUntil far above the attempt count: every attempt fails.
-	_, counterPath := writeFlakyBackupFakeDolt(t, binDir, 99)
+	counterPath := writeFlakyBackupFakeDolt(t, binDir, 99)
 
 	out := runDogScript(t, "mol-dog-backup.sh", binDir, cityPath, dataDir,
 		"GC_BACKUP_DATABASES=prod", "GC_DOLT_BACKUP_SYNC_ATTEMPTS=2")
