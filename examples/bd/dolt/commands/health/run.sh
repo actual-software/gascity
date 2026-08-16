@@ -327,6 +327,7 @@ esac
 
 backup_artifact_dir="${GC_BACKUP_ARTIFACT_DIR:-$GC_CITY_PATH/.dolt-backup}"
 backup_measured=false
+backup_worst_seen=false
 backup_freshness=""
 backup_stale=null
 backup_age_sec=0
@@ -377,9 +378,24 @@ if [ -d "$backup_artifact_dir" ]; then
     elif [ "$backup_stale" = null ]; then
       backup_stale=false
     fi
-    if [ "$db_age" -gt "$backup_age_sec" ]; then
+    # The age follows the same worst-first rule, which a plain `-gt` against a
+    # zero seed gets wrong in two directions. A database that has never
+    # produced a backup carries -1, and that is the worst state there is rather
+    # than the smallest number, so it has to win outright or the aggregate
+    # reports 0 for a city with no backup at all — the same confident zero from
+    # an unmeasured probe that this block exists to stop emitting. A genuine
+    # age of 0 also has to be able to seed the aggregate, or a database synced
+    # in the second the check runs reports the empty freshness of one that was
+    # never measured.
+    if [ "$backup_worst_seen" != true ]; then
+      backup_worst_seen=true
       backup_age_sec="$db_age"
       backup_freshness="$db_fresh"
+    elif [ "$backup_age_sec" -ge 0 ]; then
+      if [ "$db_age" -lt 0 ] || [ "$db_age" -gt "$backup_age_sec" ]; then
+        backup_age_sec="$db_age"
+        backup_freshness="$db_fresh"
+      fi
     fi
   done
 fi

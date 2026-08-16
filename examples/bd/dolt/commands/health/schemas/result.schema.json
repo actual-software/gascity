@@ -63,7 +63,8 @@
           "type": "string"
         },
         "dolt_age_sec": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Age in seconds of the worst eligible Dolt backup remote, or -1 when that database has never produced a backup file. Carries no information when dolt_measured is false."
         },
         "dolt_stale": {
           "type": ["boolean", "null"],

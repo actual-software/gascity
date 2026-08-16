@@ -2390,4 +2390,81 @@ func TestHealthReportsNeverBackedUpDatabaseAsStale(t *testing.T) {
 	if !backups.Databases[0].Stale {
 		t.Errorf("never-backed-up hq reported not stale\n%s", out)
 	}
+	// The aggregate carries the same convention as the per-database entry. A
+	// consumer graphing dolt_age_sec must not be handed 0 — the best possible
+	// reading — for a city whose bead store has no backup at all.
+	if backups.DoltAgeSec != -1 {
+		t.Errorf("dolt_age_sec = %d for a city with no backup at all, want -1; 0 is the freshest value there is\n%s", backups.DoltAgeSec, out)
+	}
+}
+
+// TestHealthAggregateAgeFollowsTheNeverBackedUpDatabase pins that -1 beats a
+// finite age in the aggregate rather than losing to it.
+//
+// -1 is a sentinel, not a small number, so a worst-first rule written as a
+// numeric maximum silently picks the healthy sibling. The mixed shape is the
+// one to guard: a city part-way through provisioning has one database syncing
+// and another that has never produced a backup, and reporting the syncing
+// one's age as the aggregate is how the unbacked database disappears.
+func TestHealthAggregateAgeFollowsTheNeverBackedUpDatabase(t *testing.T) {
+	cityPath := t.TempDir()
+	artifactDir := filepath.Join(cityPath, ".dolt-backup")
+	for _, db := range []string{"aa", "hq"} {
+		if err := os.MkdirAll(filepath.Join(artifactDir, db), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", db, err)
+		}
+	}
+	// aa syncs; hq is configured and has produced nothing. aa sorts first, so
+	// the glob hands the finite age to the aggregate before the sentinel.
+	if err := os.WriteFile(filepath.Join(artifactDir, "aa", "manifest"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write aa manifest: %v", err)
+	}
+
+	backups, out := runHealthBackupsJSON(t, cityPath)
+
+	if backups.DoltStale == nil || !*backups.DoltStale {
+		t.Fatalf("dolt_stale = %v with one never-backed-up database, want true\n%s", backups.DoltStale, out)
+	}
+	if backups.DoltAgeSec != -1 {
+		t.Errorf("dolt_age_sec = %d, want -1: hq has never been backed up and that is worse than aa's age, not smaller than it\n%s", backups.DoltAgeSec, out)
+	}
+	if backups.DoltFresh != "" {
+		t.Errorf("dolt_freshness = %q for a never-backed-up worst database, want empty\n%s", backups.DoltFresh, out)
+	}
+}
+
+// TestHealthReportsFreshnessForABackupWrittenThisSecond pins that an age of 0
+// seeds the aggregate.
+//
+// The clamp above it turns any non-positive age into 0, so 0 is a reachable
+// measured state rather than a theoretical one: a sync finishing in the second
+// the check runs, or a backup file whose mtime is a little ahead of this
+// clock. Seeding the aggregate from a zero rather than comparing against one
+// is what keeps that city from reporting the empty dolt_freshness of a city
+// nothing was measured on.
+func TestHealthReportsFreshnessForABackupWrittenThisSecond(t *testing.T) {
+	cityPath := t.TempDir()
+	manifest := filepath.Join(cityPath, ".dolt-backup", "hq", "manifest")
+	if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(manifest, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	ahead := time.Now().Add(5 * time.Second)
+	if err := os.Chtimes(manifest, ahead, ahead); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	backups, out := runHealthBackupsJSON(t, cityPath)
+
+	if backups.DoltStale == nil || *backups.DoltStale {
+		t.Fatalf("dolt_stale = %v for a backup written this second, want false\n%s", backups.DoltStale, out)
+	}
+	if backups.DoltAgeSec != 0 {
+		t.Fatalf("dolt_age_sec = %d, want 0 from the non-negative clamp\n%s", backups.DoltAgeSec, out)
+	}
+	if backups.DoltFresh != "0s" {
+		t.Errorf("dolt_freshness = %q, want \"0s\"; an empty string here is what an unmeasured probe reports\n%s", backups.DoltFresh, out)
+	}
 }
