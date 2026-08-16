@@ -2,10 +2,12 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -174,14 +176,13 @@ func readGCBeadsBdScript(t *testing.T) string {
 // passing args as $1, $2, … and returning the snippet's exit status as an error.
 func runGCBeadsBdSnippet(t *testing.T, script, binDir string, args ...string) error {
 	t.Helper()
-	cmd := exec.Command("bash", append([]string{"-c", script, "bash"}, args...)...)
-	cmd.Env = append(os.Environ(),
+	_, _, err := runGCBeadsBdCommand(t, append(os.Environ(),
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"DOLT_PORT=42188",
 		"DOLT_USER=root",
 		"DOLT_PASSWORD=",
-	)
-	return cmd.Run()
+	), "bash", append([]string{"-c", script, "bash"}, args...)...)
+	return err
 }
 
 // exitCodeOf turns runGCBeadsBdSnippet's error back into the shell exit status,
@@ -211,5 +212,127 @@ func writeFakeCountDolt(t *testing.T, dir, stdout string, exitCode int) {
 	body := "#!/bin/sh\ncat '" + payload + "'\nexit " + strconv.Itoa(exitCode) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "dolt"), []byte(body), 0o755); err != nil {
 		t.Fatalf("write fake dolt: %v", err)
+	}
+}
+
+// TestGcBeadsBdInitRefusesForcedReinitWhenDatabaseHoldsBdTables drives op_init
+// itself rather than the helper underneath it. The table above pins what
+// bd_runtime_store_holds_bd_tables answers; this pins what op_init does with a
+// "present", which is where the answer either prevents a destructive reinit or
+// does nothing at all.
+//
+// The scenario is the one from the failing job: a database holding bd tables
+// whose schema probe keeps coming back negative. op_init used to answer that
+// with `bd init --force`, beads then refused to migrate the dirty tables the
+// reinit had to touch (gastownhall/beads#4566), and city init died naming
+// neither the database nor the cause. Three things are asserted, and the last
+// is the one carrying the data-safety property: init stops, it says which
+// database and why, and bd init never ran. A refusal message on its own would
+// not have saved the store.
+//
+// Neither existing force-reinit test covers this branch. Their fake dolt logs
+// the count query and answers nothing on stdout, so both land on "undetermined"
+// and proceed to the reinit, which leaves "present" wired to the refusal by
+// nothing but inspection.
+func TestGcBeadsBdInitRefusesForcedReinitWhenDatabaseHoldsBdTables(t *testing.T) {
+	cityPath := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cityPath, ".gc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cityPath, ".beads"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityPath, ".beads", "metadata.json"),
+		[]byte(`{"database":"dolt","backend":"dolt","dolt_mode":"server","dolt_database":"hq"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	materializeBuiltinPacksForTest(t, cityPath)
+	script := gcBeadsBdScriptPath(cityPath)
+
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// bd init exits 0 rather than failing, so a regression surfaces as this
+	// test's own assertion rather than as an unrelated downstream error.
+	initMarker := filepath.Join(t.TempDir(), "bd-init-ran")
+	fakeBd := fmt.Sprintf(`#!/bin/sh
+set -eu
+if [ "${1:-}" = "init" ]; then
+  printf '%%s\n' "$@" > %q
+fi
+exit 0
+`, initMarker)
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(fakeBd), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The count says four bd tables are present; the schema probe never
+	// succeeds. That pair is the contradiction the guard exists to notice.
+	fakeDolt := `#!/bin/sh
+set -eu
+query=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-q" ]; then
+    query="$arg"
+    break
+  fi
+  prev="$arg"
+done
+case "$query" in
+  *information_schema.tables*)
+    printf 'cnt\n4\n'
+    exit 0
+    ;;
+  *"FROM config"*)
+    echo "table not found: config" >&2
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "dolt"), []byte(fakeDolt), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// sleep_ms shells out to sleep, so stubbing it spends the retry budget at
+	// no wall-clock cost.
+	if err := os.WriteFile(filepath.Join(binDir, "sleep"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := runGCBeadsBdCommand(t, sanitizedBaseEnv(append(gcBeadsBdTestHomeEnv(t),
+		"GC_CITY_PATH="+cityPath,
+		"PATH="+strings.Join([]string{binDir, os.Getenv("PATH")}, string(os.PathListSeparator)),
+	)...), script, "init", cityPath, "gc", "hq")
+	// The refusal is written to stderr and the progress lines to stdout; the
+	// assertions below are all substring checks, so reading them as one body
+	// keeps this independent of how the two streams interleave.
+	out := stdout + stderr
+	if err == nil {
+		t.Fatalf("init should refuse to force-reinitialize a database holding bd tables, but it succeeded:\n%s", out)
+	}
+
+	got := out
+	for _, want := range []string{
+		"holds bd tables but its bd schema stayed unreadable across retries",
+		"refusing to force-reinitialize",
+		"'hq'",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("refusal is not self-describing, missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "missing bd schema; re-initializing") {
+		t.Fatalf("init fell through to the destructive reinit instead of refusing:\n%s", got)
+	}
+	if _, statErr := os.Stat(initMarker); statErr == nil {
+		argv, _ := os.ReadFile(initMarker)
+		t.Fatalf("bd init ran despite the refusal, so the guard reported without preventing:\nargv:\n%s\noutput:\n%s", argv, got)
 	}
 }
