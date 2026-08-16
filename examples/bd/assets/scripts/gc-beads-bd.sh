@@ -690,6 +690,13 @@ wait_for_bd_runtime_schema() {
 # caller can tell "this database is empty" from "the server did not answer" —
 # the distinction bd_runtime_schema_ready collapses by design, because a bare
 # readiness probe has no reason to care why it came back negative.
+#
+# The table names below are bd's, listed literally. That is a known ceiling on
+# how much the guard protects: if bd renames these or adds others, a populated
+# store whose tables all fall outside the list counts 0 and reads as empty, so
+# the force-reinit gets authorized again. The failure lands on the behaviour
+# that shipped before this guard existed rather than on something worse, and
+# widening the list belongs with whatever change renames the tables.
 bd_runtime_bd_table_count() {
     local db="$1"
     local host output
