@@ -149,7 +149,7 @@ var (
 // evidence to refuse, on every controller-opened city, because both the store
 // opener and wrapWithCachingStore hand the API server its city store through
 // this wrapper. Inner stores that cannot witness themselves report no
-// evidence, which leaves the caller on its prior behaviour rather than
+// evidence, which leaves the caller on its prior behavior rather than
 // refusing a count. beadPolicyGraphStore embeds *beadPolicyStore, so it
 // forwards through this too.
 func (s *beadPolicyStore) SawRows() bool {

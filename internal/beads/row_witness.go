@@ -26,7 +26,7 @@ package beads
 //
 // It is optional in the style of Counter and BatchDeleter: a store that cannot
 // witness its own rows simply does not implement it, and callers fall back to
-// their prior behaviour rather than to a refusal.
+// their prior behavior rather than to a refusal.
 type RowWitness interface {
 	// SawRows reports whether a read of this store's scope has returned at
 	// least one row in this process, counted as the store received it and

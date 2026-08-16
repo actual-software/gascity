@@ -717,7 +717,7 @@ func TestBeadPolicyStorePreservesRowWitness(t *testing.T) {
 
 // TestBeadPolicyStoreReportsNoEvidenceWithoutInnerWitness covers the inner
 // stores that cannot witness themselves. Reporting no evidence is what keeps a
-// caller on its prior behaviour, the same way an absent inner Counter reports
+// caller on its prior behavior, the same way an absent inner Counter reports
 // ErrCountUnsupported rather than failing the read.
 func TestBeadPolicyStoreReportsNoEvidenceWithoutInnerWitness(t *testing.T) {
 	store := wrapStoreWithBeadPolicies(beads.NewMemStore(), &config.City{})

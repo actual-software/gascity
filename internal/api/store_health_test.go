@@ -691,7 +691,7 @@ func TestCountBeadStoreRowsKeepsAZeroFromAnEmptyLedger(t *testing.T) {
 }
 
 // TestCountBeadStoreRowsKeepsAZeroFromAStoreThatCannotWitnessItself pins the
-// behaviour for every store implementing no witness, which is what keeps this
+// behavior for every store implementing no witness, which is what keeps this
 // change from turning an unrelated backend's healthy zero into a partial error.
 func TestCountBeadStoreRowsKeepsAZeroFromAStoreThatCannotWitnessItself(t *testing.T) {
 	store := beads.NewMemStore()

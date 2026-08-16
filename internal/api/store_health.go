@@ -190,7 +190,7 @@ var errRowCountContradicted = errors.New("store answered zero for a whole-ledger
 // and with the reason attached.
 //
 // A store with no witness, or one this process has not yet seen return a row,
-// keeps the prior behaviour and its zero. That is deliberate: a genuinely
+// keeps the prior behavior and its zero. That is deliberate: a genuinely
 // empty ledger must still report a healthy zero, and RowWitness proves only
 // presence, never absence.
 func measuredStoreRows(store beads.Store, rows int, branch string) (int, error) {
