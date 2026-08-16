@@ -9446,8 +9446,13 @@ func TestOrderExecEnvReservedKeysCoverProjectedEnv(t *testing.T) {
 	// The exception above is only sound while those keys really are projected.
 	// Assert they were, so that dropping the projection surfaces as a failure
 	// here instead of being absorbed by the allowlist as an empty set.
+	//
+	// Two different mistakes land here. Either the projection stopped emitting a
+	// key it used to emit, or a key joined githubTokenExecEnvKeys without a
+	// matching t.Setenv at the top of this test, so it was never in the ambient
+	// environment to project. The env dump below tells them apart.
 	if projectedOverridable != len(githubTokenExecEnvKeys) {
-		t.Fatalf("projected %d of %d deliberately-overridable keys %v; the allowlist would otherwise mask a dropped projection. env=%v",
+		t.Fatalf("projected %d of %d deliberately-overridable keys %v; either the projection dropped one, which the allowlist would otherwise mask, or a key was added to that list without a t.Setenv in this test. env=%v",
 			projectedOverridable, len(githubTokenExecEnvKeys), githubTokenExecEnvKeys, envSlice)
 	}
 }
