@@ -32,13 +32,19 @@ func newDoctorSelectorCity(t *testing.T) string {
 }
 
 type doctorSelectorPayload struct {
-	Passed         int `json:"passed"`
-	BlockingFailed int `json:"blocking_failed"`
+	SchemaVersion  string `json:"schema_version"`
+	OK             *bool  `json:"ok"`
+	Passed         int    `json:"passed"`
+	BlockingFailed int    `json:"blocking_failed"`
 	Results        []struct {
 		Name   string `json:"name"`
 		Status string `json:"status"`
 	} `json:"results"`
-	Error            string   `json:"error"`
+	Error *struct {
+		Code     string `json:"code"`
+		Message  string `json:"message"`
+		ExitCode int    `json:"exit_code"`
+	} `json:"error"`
 	RegisteredChecks []string `json:"registered_checks"`
 }
 
@@ -134,18 +140,71 @@ func TestDoctorUnknownCheckNameJSONCarriesErrorAndEmptyResults(t *testing.T) {
 	cityDir := newDoctorSelectorCity(t)
 	prependDoctorJSONStubBinaries(t, "tmux", "git", "jq", "pgrep", "lsof")
 
-	code, payload, _ := runDoctorJSON(t, cityDir, "--check", "no-such-check")
+	// The failure schema comes from the command itself, so this asserts against
+	// the contract gc publishes rather than a copy of it in the test.
+	var schemaStdout, schemaStderr bytes.Buffer
+	if code := run([]string{"doctor", "--json-schema=failure"}, &schemaStdout, &schemaStderr); code != 0 {
+		t.Fatalf("failure schema code=%d stderr=%q", code, schemaStderr.String())
+	}
+	failureSchema := compileJSONSchema(t, "gc://schemas/failure.schema.json", schemaStdout.Bytes())
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--city", cityDir, "doctor", "--json", "--check", "no-such-check"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("exit = 0, want non-zero")
 	}
-	if payload.Error == "" {
-		t.Error("error field is empty; a caller filtering by name would read this payload as clean")
+
+	var raw any
+	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if err := failureSchema.Validate(raw); err != nil {
+		t.Fatalf("payload does not satisfy the published failure schema: %v\n%s", err, stdout.String())
+	}
+
+	var payload doctorSelectorPayload
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	// ok:false is the whole point. A report-shaped payload would get ok:true
+	// from withDefaultSuccessOK and report zeroed counts, so a run that
+	// measured nothing would read clean to a caller checking only that field.
+	if payload.OK == nil || *payload.OK {
+		t.Errorf("ok = %v, want false", payload.OK)
+	}
+	if payload.Error == nil || payload.Error.Code != "unknown_check" {
+		t.Errorf("error = %+v, want code unknown_check", payload.Error)
+	}
+	if payload.Error != nil && payload.Error.ExitCode != code {
+		t.Errorf("error.exit_code = %d, want the process exit code %d", payload.Error.ExitCode, code)
 	}
 	if len(payload.Results) != 0 {
 		t.Errorf("results = %v, want empty", resultNames(payload))
 	}
 	if len(payload.RegisteredChecks) == 0 {
 		t.Error("registered_checks is empty; the caller has no way to learn what it could ask for")
+	}
+}
+
+func TestDoctorSelectedRunStillReportsOKTrue(t *testing.T) {
+	// The failure envelope is scoped to the unknown-name path. A selected run
+	// that succeeds keeps the ordinary report shape, ok:true included, so
+	// existing --json consumers see no change.
+	cityDir := newDoctorSelectorCity(t)
+	prependDoctorJSONStubBinaries(t, "tmux", "git", "jq", "pgrep", "lsof")
+
+	code, payload, stderr := runDoctorJSON(t, cityDir, "--check", "city-structure")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr)
+	}
+	if payload.OK == nil || !*payload.OK {
+		t.Errorf("ok = %v, want true", payload.OK)
+	}
+	if payload.Error != nil {
+		t.Errorf("error = %+v, want absent", payload.Error)
+	}
+	if len(payload.RegisteredChecks) != 0 {
+		t.Errorf("registered_checks = %v, want absent on a successful run", payload.RegisteredChecks)
 	}
 }
 
@@ -203,7 +262,7 @@ func TestDoctorCheckSuggestionsCoverMisspellingAndIncompleteNames(t *testing.T) 
 		want  string
 	}{
 		{"controler", "controller"},                      // dropped letter: no substring relation either way
-		{"contorller", "controller"},                     // transposition
+		{"contorller", "controller"},                     //nolint:misspell // intentional transposition under test
 		{"dolt-server", "rig:core:dolt-server"},          // correct but unscoped
 		{"custom-types:city:extra", "custom-types:city"}, // over-qualified
 	}

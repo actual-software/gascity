@@ -497,6 +497,23 @@ func doDoctor(opts doctorOpts, stdout, stderr io.Writer) int {
 // print most of the registry inline. The full list still follows in text mode.
 const maxDoctorCheckSuggestions = 5
 
+// doctorUnknownCheckErrorCode is the error code an unresolvable --check name
+// reports under --json, so a caller can branch on it without parsing prose.
+const doctorUnknownCheckErrorCode = "unknown_check"
+
+// doctorUnknownCheckFailure is the --json payload for an unresolvable --check
+// name. It is the shared failure envelope (schemas/failure.schema.json), not a
+// doctor report, because a report-shaped payload gets ok:true from
+// withDefaultSuccessOK and carries zeroed counts with an empty results array —
+// a run that measured nothing reading clean to exactly the caller this flag
+// exists to protect. registered_checks rides along under the schema's
+// additionalProperties, so the caller learns what it could have asked for
+// without a second invocation.
+type doctorUnknownCheckFailure struct {
+	jsonSchemaErrorPayload
+	RegisteredChecks []string `json:"registered_checks,omitempty"`
+}
+
 // reportUnknownDoctorChecks fails a --check run whose names do not all resolve,
 // and tells the caller what it could have asked for. Running the names that did
 // match would be worse than erroring: a caller filtering doctor output by name
@@ -506,12 +523,18 @@ func reportUnknownDoctorChecks(unmatched []string, registered []doctor.Check, js
 	names := doctor.CheckNames(registered)
 	message := unknownDoctorChecksMessage(unmatched, names)
 	if jsonOut {
-		out := doctorJSONReport{
-			Results:          []doctorJSONResult{},
-			Error:            message,
+		if err := writeCLIJSONLine(stdout, doctorUnknownCheckFailure{
+			jsonSchemaErrorPayload: jsonSchemaErrorPayload{
+				SchemaVersion: "1",
+				OK:            false,
+				Error: jsonSchemaErrorDetail{
+					Code:     doctorUnknownCheckErrorCode,
+					Message:  message,
+					ExitCode: 1,
+				},
+			},
 			RegisteredChecks: names,
-		}
-		if err := writeCLIJSONLine(stdout, out); err != nil {
+		}); err != nil {
 			fmt.Fprintf(stderr, "gc doctor: %v\n", err) //nolint:errcheck // best-effort stderr
 		}
 		return 1
@@ -749,12 +772,6 @@ type doctorJSONReport struct {
 	Fixed          int                `json:"fixed"`
 	Results        []doctorJSONResult `json:"results"`
 	Error          string             `json:"error,omitempty"`
-	// RegisteredChecks is set only when --check named something this
-	// workspace does not register, so the caller that got the error can see
-	// what it could have asked for without re-running in text mode. Omitted
-	// on every successful run, which keeps the wire format of a normal
-	// --json report byte-identical.
-	RegisteredChecks []string `json:"registered_checks,omitempty"`
 }
 
 func doctorStatusString(s doctor.CheckStatus) string {
