@@ -158,6 +158,35 @@ func TestMCPMailImagePinsPatchedPythonDependencies(t *testing.T) {
 	}
 }
 
+// TestMCPMailImageUpgradesPatchedOSPackages guards the --only-upgrade list in
+// Dockerfile.mail. The base image is pinned by digest, so an OS-package CVE is only
+// cleared by naming the package here, and Trivy reports every binary package of a
+// source separately: dropping one name leaves that package on the vulnerable version
+// and the scan red, with the other eight looking like the whole fix.
+func TestMCPMailImageUpgradesPatchedOSPackages(t *testing.T) {
+	dockerfile := readFile(t, repoRoot(t), "contrib/k8s/Dockerfile.mail")
+
+	upgrade, _, ok := strings.Cut(dockerfile, "&& apt-get install -y --no-install-recommends \\")
+	if !ok {
+		t.Fatal("contrib/k8s/Dockerfile.mail has no plain apt-get install stanza to bound the --only-upgrade list")
+	}
+	if !strings.Contains(upgrade, "--only-upgrade") {
+		t.Fatal("contrib/k8s/Dockerfile.mail no longer upgrades any pinned-base OS package")
+	}
+
+	for _, pkg := range []string{
+		// openssl / systemd set, already present.
+		"libcap2", "libssl3t64", "libsystemd0", "libudev1", "openssl", "openssl-provider-legacy",
+		// util-linux set, CVE-2026-53615, fixed in 2.41.5-0+deb13u1.
+		"bsdutils", "libblkid1", "liblastlog2-2", "libmount1", "libsmartcols1",
+		"libuuid1", "login", "mount", "util-linux",
+	} {
+		if !strings.Contains(upgrade, "\n    "+pkg+" \\") {
+			t.Errorf("contrib/k8s/Dockerfile.mail --only-upgrade list missing %q", pkg)
+		}
+	}
+}
+
 // TestRebuiltToolsAssertPatchedGRPCArtifact guards the artifact-level proof that
 // each rebuilt CLI actually embeds the patched grpc module. Text-level ARG/recipe
 // checks confirm the build inputs; these `go version -m` assertions are the only
@@ -280,7 +309,7 @@ func TestTrivyIgnoreDropsStdlibWaiversForRebuiltTools(t *testing.T) {
 				continue
 			}
 			if rebuiltPaths[p] {
-				t.Errorf("%s waives rebuilt tool %q; Dockerfile.base and Dockerfile.agent force the patched module into that build, so drop the path instead of waiving it", v.ID, p)
+				t.Errorf("%s waives rebuilt tool %q; Dockerfile.base forces the patched modules into the gh and Dolt builds and bd's pinned source already selects them, so move the module forward in that build instead of waiving the path", v.ID, p)
 			}
 		}
 	}
