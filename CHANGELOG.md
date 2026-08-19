@@ -7,7 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`gc pack registry publish` now refuses an unscoped pack name unless you
+  pass `--allow-unscoped-name`.** Registry pack names are scoped as
+  `<github-owner>/<pack>`, and the registry has always reserved bare names for
+  packs it already holds a claim for — but the CLI submitted one anyway, so the
+  refusal arrived only after the request had been created and parked in the
+  review queue as an unapprovable pending row. Publish now checks the name
+  locally, before any credential or publish traffic, and names the exact
+  `[pack].name` edit that fixes it. It also refuses a scope that is not the
+  lowercased GitHub owner of the source repository, which the registry rejects
+  with no override.
+
+  Upgrading: a publisher of a grandfathered bare name must add
+  `--allow-unscoped-name` to keep publishing under it — the registry still
+  accepts a bare name it already holds a claim for, and a local preflight
+  cannot see the claim table. New packs must set
+  `[pack].name = "<github-owner>/<pack>"` in `pack.toml`. `--name` no longer
+  stands in for a missing `[pack].name`, and it can no longer rename a pack at
+  publish time: the registry byte-compares it with `[pack].name`, so it can
+  only restate the name `pack.toml` already declares.
+
 ### Fixed
+
+- **`gc import add` of a local in-git pack now locks to HEAD, not the repo's
+  latest tag.** Per `gc import add --help`, a local path inside a git
+  worktree is documented to be "locked to the current commit," but the
+  default version resolution (absent an explicit `--version`) preferred the
+  repo's latest semver tag whenever one existed. A pack added to the
+  worktree after the last tag was cut resolved to a checkout whose tree
+  predates the pack, failing with a misleading "missing pack.toml" error
+  even though the pack exists at HEAD. A local-worktree-promoted source now
+  always locks to `sha:<HEAD commit>`, matching the documented behavior;
+  registry/remote sources are unaffected. Fixes #3659.
 
 - **The dolt pack's `run_bounded` python3 fallback now sends SIGTERM before
   SIGKILL, matching its documented contract.** The fallback (used when
@@ -83,6 +116,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   points at `gc register`/`gc unregister` for the split operations; the
   `--json` envelope gained an `unregistered` field reporting whether this
   stop also removed the supervisor registration (gastownhall/gascity#4366).
+
+- **`gc bd` no longer lets bd's own error message steer operators into a
+  Dolt-server conflict.** When the managed Dolt server is unreachable, bd
+  (with `dolt.auto-start: false`, which gc always sets) tells the operator
+  to run `bd dolt start` — but that starts a second, unmanaged Dolt server
+  that fights gc's own managed server for the same data directory. `gc bd`
+  now detects that suggestion in bd's stderr and appends a corrective hint
+  pointing at the actual remedy (`gc start` / `gc dolt restart`) alongside
+  bd's original output, without altering bd's own exit code. The hint fires
+  only for gc-managed Dolt endpoints, whose lifecycle gc owns; externally
+  bound or explicitly configured endpoints keep bd's own output unchanged
+  (gastownhall/gascity#1374).
 
 - **ACP activity is now available across process boundaries.** ACP
   `session/update` timestamps are published through an atomic, coalesced
