@@ -61,6 +61,18 @@ const (
 	ControllerErrorClassMetadataKey      = "gc.controller_error_class"
 	ControllerErrorMetadataKey           = "gc.controller_error"
 	ControllerRetryableMetadataKey       = "gc.controller_retryable"
+	// ControllerRetryFirstSeenMetadataKey is the RFC3339 instant of the FIRST
+	// semantic-refusal retry recorded for a control bead. It is the persisted
+	// deadline anchor for the bounded Tier-B retry budget: it lives on the bead
+	// rather than in dispatcher memory precisely so a control-dispatcher restart
+	// cannot reset the clock. Written once and never re-stamped while the bead
+	// keeps failing; cleared with the other controller-error keys on recovery.
+	ControllerRetryFirstSeenMetadataKey = "gc.controller_retry_first_seen"
+	// ControllerRetryCountMetadataKey counts the semantic-refusal retries
+	// recorded for a control bead. Diagnostics only — the budget is a deadline,
+	// not a count, because per-attempt cost varies by two orders of magnitude
+	// between a healthy and a saturated store.
+	ControllerRetryCountMetadataKey = "gc.controller_retry_count"
 	// CoordinatorOutcomeProducerDispositionMetadataKey holds the typed-close JSON
 	// envelope written by gc-outcome-close.
 	CoordinatorOutcomeProducerDispositionMetadataKey = "gc.coordinator_outcome.producer_disposition"
@@ -165,6 +177,8 @@ const (
 	RigRootMetadataKey                   = "gc.rig_root"
 	RootBeadIDMetadataKey                = "gc.root_bead_id"
 	RootStoreRefMetadataKey              = "gc.root_store_ref"
+	RouteQuarantineMetadataKey           = "gc.route_recovery_quarantined"
+	RouteQuarantineReasonMetadataKey     = "gc.route_recovery_quarantine_reason"
 	RoutedToMetadataKey                  = "gc.routed_to"
 	RunTargetMetadataKey                 = "gc.run_target"
 	RuntimeVarsMetadataKey               = "gc.graphv2_vars.v1"
@@ -325,6 +339,8 @@ var KnownMetadataKeys = []string{
 	ControllerErrorClassMetadataKey,
 	ControllerErrorMetadataKey,
 	ControllerRetryableMetadataKey,
+	ControllerRetryFirstSeenMetadataKey,
+	ControllerRetryCountMetadataKey,
 	CoordinatorOutcomeProducerDispositionMetadataKey,
 	CurrentRunIDMetadataKey,
 	CwdMetadataKey,
@@ -415,6 +431,8 @@ var KnownMetadataKeys = []string{
 	RigRootMetadataKey,
 	RootBeadIDMetadataKey,
 	RootStoreRefMetadataKey,
+	RouteQuarantineMetadataKey,
+	RouteQuarantineReasonMetadataKey,
 	RoutedToMetadataKey,
 	RunTargetMetadataKey,
 	RuntimeVarsMetadataKey,

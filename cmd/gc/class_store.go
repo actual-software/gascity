@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/gastownhall/gascity/internal/beads"
@@ -12,6 +13,7 @@ import (
 	"github.com/gastownhall/gascity/internal/formula"
 	"github.com/gastownhall/gascity/internal/mail"
 	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/storeref"
 )
 
 // This file is the controller/CLI-side seam of the per-class store refactor.
@@ -107,9 +109,12 @@ func (cr *CityRuntime) graphBeadStore() beads.GraphStore {
 }
 
 // sessionsBeadStore returns the runtime's session/session-wait bead store: the
-// configured session class store (with the controller recorder so relocated
-// session writes emit bead.*) when [beads.classes.sessions] relocates sessions,
-// else the work store. Byte-identical to cityBeadStore() at the default bd backend.
+// configured session class store when [beads.classes.sessions] relocates
+// sessions, else the work store. The recorder is passed for signature parity
+// and is not what makes a write observable — the controller's emission comes
+// from the CachingStore around its work ledger, and a relocated class store has
+// no such layer on this side (class_store_emit.go covers the one-shot CLI's).
+// Byte-identical to cityBeadStore() at the default bd backend.
 // Returned as the strongly-typed beads.SessionStore so the session class stays
 // statically visible; the wrapper carries the same underlying store value.
 func (cr *CityRuntime) sessionsBeadStore() beads.SessionStore {
@@ -249,7 +254,13 @@ func (s *beadPolicyGraphStore) graphApplierFor(_ coordclass.Class) beads.GraphAp
 // agree.
 //
 // cfg, cityPath and rec stay in the signature for the per-scope work routing
-// that resolves elsewhere; they are not read here.
+// that resolves elsewhere; they are not read here. rec in particular does NOT
+// make a relocated write observable, for any class: a class store is a bare
+// bead engine with no emitting layer, and what a caller passes here changes
+// nothing about that. Emission is decided where the ROUTES are built, once —
+// the one-shot CLI funnel gives its stores an emit target
+// (storageRoutes.withCLIEmission), and the controller's boot does not, because
+// its own emitter already covers it. See class_store_emit.go.
 func resolveClassStore(routes *storageRoutes, workStore beads.Store, cfg *config.City, cityPath, class string, rec events.Recorder) beads.Store {
 	_ = cfg
 	_ = cityPath
@@ -309,9 +320,9 @@ func resolveSessionStore(routes *storageRoutes, workStore beads.Store, cfg *conf
 
 // resolveGraphStore returns the beads.Store backing the GRAPH coordination
 // class. Identity today: the work store. When graph relocates, the dedicated
-// graph-store dispatch plugs in at resolveClassStore (graph uses its own legacy
-// .gc/ location and is event-silent by design, so rec is accepted for signature
-// parity with the other resolve*Store helpers and ignored here).
+// graph-store dispatch plugs in at resolveClassStore. rec is accepted for
+// signature parity with the other resolve*Store helpers and ignored here, as it
+// is for every class: see resolveClassStore.
 func resolveGraphStore(routes *storageRoutes, workStore beads.Store, cfg *config.City, cityPath string, rec events.Recorder) beads.Store {
 	return resolveClassStore(routes, workStore, cfg, cityPath, config.BeadClassGraph, rec)
 }
@@ -376,6 +387,70 @@ func graphClassBinding(routes *storageRoutes) (beads.Store, bool) {
 	return routes.storeFor(coordclassFor(config.BeadClassGraph))
 }
 
+// cityQueryTopology answers the two questions a generated work_query or
+// pool-demand command has to be built against: the bd semantics the city is
+// configured for, and whether its claimable work is spread across stores a
+// single `bd ready` in the agent's work directory cannot reach.
+//
+// The second question is the RESOLVER'S, and it is answered as a projection of
+// Plan(RoutedWork) — the same plan the demand surface reads. A generated query
+// is the one consumer that cannot take a plan: its legs are bd subprocesses in a
+// workspace, and a relocated class binding is not a bd workspace at all. What it
+// can take is the plan's DECISION, which is exactly one bit: does the claimable
+// set live anywhere a bd workspace cannot reach? A binding leg in the plan means
+// yes, and the query is built around the federated reader.
+//
+// Projecting rather than re-asking is what stops the query from disagreeing with
+// the reader it drives. It also keeps the cityQueryTopology lesson intact:
+// storageSplitShapeOf reads [storage] alone and answers "no split" for a city
+// whose section was DELETED after it had already served one. That city's graph
+// beads are in a binding, its boot refuses, and Plan REFUSES over it — which is
+// projected here as FederatedReady, so the query is the federated one and fails
+// loud with the refusal that names the remedy, rather than a `bd ready` that
+// reads the work ledger and reports "no work" forever.
+//
+// A nil cfg still resolves the routes: the topology constructor reads the city's
+// own city.toml rather than the caller's snapshot, precisely because where a
+// city serves its classes from is a property of the CITY.
+func cityQueryTopology(cityPath string, cfg *config.City) config.QueryTopology {
+	topo := config.QueryTopology{}
+	if cfg != nil {
+		topo.Beads = cfg.Beads
+	}
+	topo.FederatedReady = routedWorkNeedsFederatedReader(cityPath, cfg)
+	return topo
+}
+
+// routedWorkNeedsFederatedReader reports whether this city's claimable set spans
+// a store no bd workspace can reach.
+//
+// The work legs of Plan(RoutedWork) are bd workspaces — the city work store and
+// the rigs — and the hook already fans out across them. The binding is not one,
+// so its presence in the plan is the whole answer. A REFUSED city answers yes:
+// the refusal is about a relocated class, and only the federated reader carries
+// it to the operator instead of silently reading the wrong ledger.
+//
+// The topology is built with no work legs on purpose. This asks about the SHAPE
+// of the city, not about a caller's opened stores, and every caller here — `gc
+// hook`, `gc prime`, `gc agent list`, the dispatch runtime — holds a different
+// set or none at all. Bindings do not depend on which work stores the caller
+// opened, so the answer is the same for all of them.
+func routedWorkNeedsFederatedReader(cityPath string, cfg *config.City) bool {
+	topo := residencyTopologyForCity(cityPath, cfg, queryTopologyWorkProbe{}, nil)
+	plan, err := storeref.Plan(storeref.RoutedWork{}, topo)
+	if err != nil {
+		return true
+	}
+	return plan.TouchesBinding()
+}
+
+// queryTopologyWorkProbe stands in for the work leg of a topology built to be
+// PLANNED over and never read. Plan refuses a legless topology — a Union that
+// reported zero rows as a complete answer is the silent-shrink shape — so the
+// leg has to exist; nothing in this file executes the plan, so it never answers
+// a call.
+type queryTopologyWorkProbe struct{ beads.Store }
+
 // newCityMailProvider builds the controller's mail provider as a two-store mail
 // provider: message beads persist in the messaging-class store, and mail's
 // session reads/writes for addressing/identity resolution go to the session-class
@@ -414,4 +489,29 @@ func newCityExtMsgServices(routes *storageRoutes, workStore beads.Store, cfg *co
 		return &unrouted
 	}
 	return &svc
+}
+
+// warnFederationBlindOverrides tells an operator that this agent's own
+// work_query or scale_check will not see the city's relocated coordination
+// class.
+//
+// A custom query is returned verbatim, which is the contract and is not being
+// changed here. What is being changed is the SILENCE around it: on a split city
+// the generated query reads every store and the operator's does not, so the two
+// disagree about what is claimable and the override's answer is a short array
+// with nothing to distinguish it from an empty queue. That is the precise
+// failure the federated reader exits non-zero to close, and an override walks
+// straight back into it.
+//
+// Nothing is printed on a city that relocates nothing, which is every city with
+// no [storage] section: FederationBlindOverrides returns nil there, so the
+// diagnostic cannot become per-tick noise on a legacy deployment.
+func warnFederationBlindOverrides(stderr io.Writer, a *config.Agent, topo config.QueryTopology) {
+	if stderr == nil || a == nil {
+		return
+	}
+	for _, key := range a.FederationBlindOverrides(topo) {
+		fmt.Fprintf(stderr, "gc hook: agent %q sets a custom %s, which reads one store; this city serves a coordination class from a relocated binding, so that command cannot see graph-class work (the generated query uses %q)\n", //nolint:errcheck // best-effort stderr
+			a.QualifiedName(), key, "gc ready")
+	}
 }
