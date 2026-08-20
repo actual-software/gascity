@@ -222,9 +222,10 @@ func TestRebuiltToolsForcePatchedXModules(t *testing.T) {
 
 	// Minimum versions Trivy names as fixed for the findings each override clears.
 	for _, arg := range []string{
-		"ARG XCRYPTO_VERSION=0.53.0",
-		"ARG XNET_VERSION=0.56.0",
-		"ARG XTEXT_VERSION=0.39.0",
+		"ARG XCRYPTO_VERSION=0.55.0",
+		"ARG XNET_VERSION=0.58.0",
+		"ARG XTEXT_VERSION=0.41.0",
+		"ARG XMOD_VERSION=0.40.0",
 		"ARG THRIFT_VERSION=0.23.0",
 	} {
 		if !strings.Contains(base, arg) {
@@ -232,8 +233,12 @@ func TestRebuiltToolsForcePatchedXModules(t *testing.T) {
 		}
 	}
 
-	// gh only needs x/text; its pinned source already selects patched x/crypto and x/net.
-	ghModules := map[string]string{"golang.org/x/text": "XTEXT_VERSION"}
+	// gh needs x/text and x/mod; its pinned source already selects patched x/crypto and x/net.
+	// Dolt takes no x/mod override because no x/mod package is linked into its binary.
+	ghModules := map[string]string{
+		"golang.org/x/text": "XTEXT_VERSION",
+		"golang.org/x/mod":  "XMOD_VERSION",
+	}
 	doltModules := map[string]string{
 		"golang.org/x/crypto":      "XCRYPTO_VERSION",
 		"golang.org/x/net":         "XNET_VERSION",
@@ -440,5 +445,22 @@ func TestTrivyIgnoreDropsGCModuleWaiversPastThreshold(t *testing.T) {
 		if semverAtLeast(have[fix.module], parseModuleSemver(t, fix.fixVersion)) {
 			t.Errorf("%s still waives usr/local/bin/gc but go.mod pins %s >= %s, which fixes it; drop the gc path so the container scan proves the gc binary is clean", v.ID, fix.module, fix.fixVersion)
 		}
+	}
+}
+
+// TestGoModPinsXModPastGCFinding guards the gc half of the same container-scan
+// finding the Dockerfile overrides cover for gh. gc is built straight from this
+// module rather than from pinned third-party source, so no `go get` in a Dockerfile
+// can move it: the only floor is go.mod's own pin, and dropping that pin back below
+// the fixed version would put the vulnerable module into usr/local/bin/gc with
+// nothing in the build failing.
+func TestGoModPinsXModPastGCFinding(t *testing.T) {
+	// The first version Trivy names as fixed for the x/mod findings on usr/local/bin/gc.
+	const xmodFixVersion = "v0.40.0"
+
+	goMod := readFile(t, repoRoot(t), "go.mod")
+	have := goModVersion(t, goMod, "golang.org/x/mod")
+	if !semverAtLeast(have, parseModuleSemver(t, xmodFixVersion)) {
+		t.Errorf("go.mod pins golang.org/x/mod below %s, so the gc binary carries the flagged module; raise the pin rather than waiving the gc path", xmodFixVersion)
 	}
 }
