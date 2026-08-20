@@ -245,11 +245,26 @@ func TestRebuiltToolsForcePatchedXModules(t *testing.T) {
 		"golang.org/x/text":        "XTEXT_VERSION",
 		"github.com/apache/thrift": "THRIFT_VERSION",
 	}
+	// Each `go get` is looked for inside its own stanza. gh and Dolt share the x/text
+	// override verbatim, so a file-wide search lets one stand in for the other and a
+	// dropped override reads as present here, failing only in the image build.
+	ghStart := strings.Index(base, "WORKDIR /src/gh")
+	doltStart := strings.Index(base, "WORKDIR /src/dolt")
+	if ghStart < 0 || doltStart <= ghStart {
+		t.Fatal("contrib/k8s/Dockerfile.base has no WORKDIR /src/gh stanza ahead of the Dolt one")
+	}
+	ghStanza := base[ghStart:doltStart]
+	doltStanza := base[doltStart:]
+	if next := strings.Index(doltStanza, "\nFROM "); next > 0 {
+		doltStanza = doltStanza[:next]
+	}
+	stanzas := map[string]string{"/out/gh": ghStanza, "/out/dolt": doltStanza}
+
 	for bin, modules := range map[string]map[string]string{"/out/gh": ghModules, "/out/dolt": doltModules} {
 		for module, arg := range modules {
 			get := `"` + module + `@v${` + arg + `}"`
-			if !strings.Contains(base, get) {
-				t.Errorf("contrib/k8s/Dockerfile.base must override %s for %s; missing %q", module, bin, get)
+			if !strings.Contains(stanzas[bin], get) {
+				t.Errorf("contrib/k8s/Dockerfile.base must override %s inside the %s build stanza; missing %q", module, bin, get)
 			}
 			assert := `go version -m ` + bin + ` | tr '\t' ' ' | grep -Fq "dep ` + module + ` v${` + arg + `} "`
 			if !strings.Contains(base, assert) {
@@ -264,12 +279,6 @@ func TestRebuiltToolsForcePatchedXModules(t *testing.T) {
 	// with XTEXT_VERSION at 0.39.0 the reversed order selects x/mod v0.38.0, under
 	// the fixed version. The two orders agree at the versions pinned today, so this
 	// is what keeps the next bump from recreating that shape.
-	ghStart := strings.Index(base, "WORKDIR /src/gh")
-	ghEnd := strings.Index(base, "WORKDIR /src/dolt")
-	if ghStart < 0 || ghEnd <= ghStart {
-		t.Fatal("contrib/k8s/Dockerfile.base has no WORKDIR /src/gh stanza ahead of the Dolt one")
-	}
-	ghStanza := base[ghStart:ghEnd]
 	xtextGet := strings.Index(ghStanza, `"golang.org/x/text@v${XTEXT_VERSION}"`)
 	xmodGet := strings.Index(ghStanza, `"golang.org/x/mod@v${XMOD_VERSION}"`)
 	if xtextGet < 0 || xmodGet < 0 {
