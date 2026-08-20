@@ -258,10 +258,12 @@ func TestRebuiltToolsForcePatchedXModules(t *testing.T) {
 		}
 	}
 
-	// Inside the gh stanza the x/mod get has to run after the x/text one. Reversed,
-	// x/text rolls x/mod back to v0.38.0, still below the fixed version. The
-	// `go version -m` proof asserted above does catch that, but only once a full
-	// image build runs.
+	// Inside the gh stanza the x/mod get has to run after the x/text one. A later
+	// `go get` naming a version below what an earlier one dragged in is a downgrade,
+	// and it takes the earlier module with it: measured against the pinned source,
+	// with XTEXT_VERSION at 0.39.0 the reversed order selects x/mod v0.38.0, under
+	// the fixed version. The two orders agree at the versions pinned today, so this
+	// is what keeps the next bump from recreating that shape.
 	ghStart := strings.Index(base, "WORKDIR /src/gh")
 	ghEnd := strings.Index(base, "WORKDIR /src/dolt")
 	if ghStart < 0 || ghEnd <= ghStart {
@@ -274,7 +276,7 @@ func TestRebuiltToolsForcePatchedXModules(t *testing.T) {
 		t.Fatal("gh stanza is missing the x/text or the x/mod override")
 	}
 	if xmodGet < xtextGet {
-		t.Error("gh stanza runs the x/mod override ahead of x/text, which rolls x/mod back below the fixed version; the newest constraint goes last")
+		t.Error("gh stanza runs the x/mod override ahead of x/text; the newest constraint goes last, so a lower x/text pin cannot downgrade x/mod out from under its assertion")
 	}
 }
 
