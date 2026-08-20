@@ -220,7 +220,7 @@ func TestRebuiltToolsForcePatchedXModules(t *testing.T) {
 	root := repoRoot(t)
 	base := readFile(t, root, "contrib/k8s/Dockerfile.base")
 
-	// Minimum versions Trivy names as fixed for the findings each override clears.
+	// Versions each override forces, at or above what Trivy names as fixed for the findings it clears.
 	for _, arg := range []string{
 		"ARG XCRYPTO_VERSION=0.55.0",
 		"ARG XNET_VERSION=0.58.0",
@@ -256,6 +256,25 @@ func TestRebuiltToolsForcePatchedXModules(t *testing.T) {
 				t.Errorf("contrib/k8s/Dockerfile.base must assert %s embeds patched %s; missing %q", bin, module, assert)
 			}
 		}
+	}
+
+	// Inside the gh stanza the x/mod get has to run after the x/text one. Reversed,
+	// x/text rolls x/mod back to v0.38.0, still below the fixed version. The
+	// `go version -m` proof asserted above does catch that, but only once a full
+	// image build runs.
+	ghStart := strings.Index(base, "WORKDIR /src/gh")
+	ghEnd := strings.Index(base, "WORKDIR /src/dolt")
+	if ghStart < 0 || ghEnd <= ghStart {
+		t.Fatal("contrib/k8s/Dockerfile.base has no WORKDIR /src/gh stanza ahead of the Dolt one")
+	}
+	ghStanza := base[ghStart:ghEnd]
+	xtextGet := strings.Index(ghStanza, `"golang.org/x/text@v${XTEXT_VERSION}"`)
+	xmodGet := strings.Index(ghStanza, `"golang.org/x/mod@v${XMOD_VERSION}"`)
+	if xtextGet < 0 || xmodGet < 0 {
+		t.Fatal("gh stanza is missing the x/text or the x/mod override")
+	}
+	if xmodGet < xtextGet {
+		t.Error("gh stanza runs the x/mod override ahead of x/text, which rolls x/mod back below the fixed version; the newest constraint goes last")
 	}
 }
 
