@@ -920,6 +920,11 @@ func buildDesiredStateWithSessionBeads(
 		namedSpecs[identity] = spec
 	}
 	namedWorkReady := make(map[string]bool, len(namedSpecs))
+	// namedWorkBeadID carries the concrete assigned-work-bead ID matched below,
+	// for identities that have one. It is intentionally left unpopulated for
+	// identities that only satisfy namedDefaultDemand (no bead-specific signal
+	// available there) — see TemplateParams.BoundStepID.
+	namedWorkBeadID := make(map[string]string, len(namedSpecs))
 	for identity := range namedDefaultDemand {
 		if _, ok := namedSpecs[identity]; ok {
 			namedWorkReady[identity] = true
@@ -972,6 +977,7 @@ func buildDesiredStateWithSessionBeads(
 			}
 			fmt.Fprintf(stderr, "namedWorkReady: %s matched by bead %s (assignee=%s status=%s)\n", identity, wb.ID, assignee, wb.Status) //nolint:errcheck
 			namedWorkReady[identity] = true
+			namedWorkBeadID[identity] = wb.ID
 			break
 		}
 	}
@@ -1017,6 +1023,7 @@ func buildDesiredStateWithSessionBeads(
 		tp.InstanceName = identity
 		tp.ConfiguredNamedIdentity = identity
 		tp.ConfiguredNamedMode = spec.Mode
+		tp.BoundStepID = namedWorkBeadID[identity]
 		if tp.Env == nil {
 			tp.Env = make(map[string]string)
 		}
@@ -2896,6 +2903,13 @@ func realizePoolDesiredSessions(
 				case errors.Is(err, errPoolSessionCreateProviderRed):
 					// debug-level: fires every tick during a red episode; not operator noise
 					fmt.Fprintf(stderr, "buildDesiredState: pool %q request: %v (provider red, fresh create blocked)\n", qualifiedName, err) //nolint:errcheck
+				case errors.Is(err, errPoolSessionNameUnavailable):
+					// The slot's runtime name is a function of its identity, so
+					// it cannot be worked around by minting another one — that
+					// is exactly the leak this replaced. The holder is named in
+					// the error because a stalled slot is only diagnosable if
+					// the operator can see who is sitting on the name.
+					fmt.Fprintf(stderr, "buildDesiredState: pool %q request: %v (slot stalled on its own runtime name; retrying next tick)\n", qualifiedName, err) //nolint:errcheck
 				default:
 					fmt.Fprintf(stderr, "buildDesiredState: pool %q request: %v (skipping)\n", qualifiedName, err) //nolint:errcheck
 				}
@@ -4042,10 +4056,16 @@ func createPoolSessionBeadWithGuardedAlias(
 	if err != nil {
 		return session.Info{}, err
 	}
+	// A transient slot is a rebinding chair, not an occupant identity. It drives
+	// two decisions here: its runtime session_name must step aside from the bare
+	// slot (TransientSlot, consumed in derivePoolSessionName), and it is never
+	// persisted as an alias (persistAlias below).
+	transientSlot := usesTransientPoolSlotIdentity(cfgAgent)
 	identity := poolSessionCreateIdentity{
-		AgentName: qualifiedInstance,
-		Slot:      slot,
-		Metadata:  metadata,
+		AgentName:     qualifiedInstance,
+		Slot:          slot,
+		Metadata:      metadata,
+		TransientSlot: transientSlot,
 	}
 	// A transient slot is never reserved as an alias: it is not an identity, so
 	// there is nothing to guard against collision and nothing to persist. The
@@ -4059,7 +4079,7 @@ func createPoolSessionBeadWithGuardedAlias(
 	// the exclusion still applies and the persistence does not.
 	alias := strings.TrimSpace(qualifiedInstance)
 	persistAlias := alias
-	if usesTransientPoolSlotIdentity(cfgAgent) {
+	if transientSlot {
 		persistAlias = ""
 	}
 	if bp.beadStore == nil {
