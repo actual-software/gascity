@@ -1456,6 +1456,7 @@ go_test(
         "//examples/lifecycle:pack_files",
     ],
     embed = [":gc_lib"],
+    shard_count = 12,
     deps = [
         "//:gascity",
         "//examples/bd",
