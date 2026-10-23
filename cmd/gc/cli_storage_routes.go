@@ -118,6 +118,43 @@ func cliStorageRoutes(cityPath string) *storageRoutes {
 	return entry.routes
 }
 
+// prewarmCLIStorageRoutes resolves cityPath's routes in the background and
+// returns the wait for it. A session hook calls it right after its own city
+// config load and before it opens the city store: the routing read composes
+// the config again and opens the class binding (0.16 s on maintainer-city),
+// and the store open is independent of it, so the two overlap. Every class
+// resolver the hook reaches then takes the routes this resolved, which are
+// exactly the routes it would have resolved itself (one resolution per city per
+// process).
+//
+// It must follow a load that ran the builtin readiness pass
+// (ensureBuiltinPacksForConfigLoad), as loadCityConfig does: the routing read's
+// composition needs the builtin pack caches that pass prepares, and a
+// composition that fails reads as a city with no [storage], whose classes all
+// route to the work store.
+func prewarmCLIStorageRoutes(cityPath string) (wait func()) {
+	resolve := cliStorageRoutesPrewarm
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		resolve(cityPath)
+	}()
+	return func() { <-done }
+}
+
+// cliStorageRoutesPrewarm is the resolution prewarmCLIStorageRoutes runs: a
+// seam, so a test can see when it starts.
+var cliStorageRoutesPrewarm = func(cityPath string) { _ = cliStorageRoutes(cityPath) }
+
+// cliStorageRoutesLoad declines the load-time revision snapshot. This is a
+// routing read for a one-shot command: nothing downstream ever calls
+// config.Revision() on the result, and building the snapshot content-hashes
+// every file of every pack directory. On maintainer-city that hash alone was
+// 10 s of an 11 s `gc ready` once the bd-env loads were memoized (cherry,
+// 2026-09-23). Same rule as cmd_agent.go and the bd_env.go probe (ga-s3cnmy);
+// TestCLIStorageRoutesDeclineTheRevisionSnapshot pins it.
+var cliStorageRoutesLoad = config.LoadOptions{SkipRevisionSnapshot: true}
+
 // resolveCLIStorageRoutes takes the verdict for one city, exactly once, and
 // turns each of its three arms into routes: nil for a city that relocates
 // nothing, the opened binding for one that has converged, and refusing stores
@@ -144,9 +181,17 @@ func cliStorageRoutes(cityPath string) *storageRoutes {
 // scope of its own. Reading where the classes live must not be able to change
 // what the command does.
 func resolveCLIStorageRoutes(cityPath string) *storageRoutes {
-	cfg, _, err := config.LoadWithIncludes(fsys.OSFS{}, filepath.Join(cityPath, "city.toml"))
+	cfg, _, err := config.LoadWithIncludesOptions(fsys.OSFS{}, filepath.Join(cityPath, "city.toml"), cliStorageRoutesLoad)
 	if err != nil {
 		return nil
+	}
+	// The worker-site verdict comes first, so a binding the descriptor does not
+	// attach is never opened, and never created, in the box (DES-CN §4.4,
+	// invariant 6). It is a standing refusal: work ids still resolve to work.
+	if refusal := workerSiteStorageRefusal(cityPath, cfg.EffectiveStorage()); refusal != nil {
+		fmt.Fprintln(cliStorageStderr, refusal) //nolint:errcheck // best-effort stderr
+		_, binding := storageSplitShapeOf(cfg.EffectiveStorage())
+		return refusingStorageRoutes(binding, refusal)
 	}
 	routes, err := storageBootGate(cityPath, cfg, cliStorageLogPrefix, nil, cliStorageStderr)
 	if err == nil {
@@ -162,6 +207,19 @@ func resolveCLIStorageRoutes(cityPath string) *storageRoutes {
 	fmt.Fprintln(cliStorageStderr, err) //nolint:errcheck // best-effort stderr
 	_, binding := storageSplitShapeOf(cfg.EffectiveStorage())
 	return refusingStorageRoutes(binding, err)
+}
+
+// cliStorageRoutesResolved reports whether this process has already entered
+// the funnel for cityPath, WITHOUT entering it. A caller about to open the
+// city's binding for itself uses it to stay off a root the funnel may hold.
+func cliStorageRoutesResolved(cityPath string) bool {
+	if cityPath == "" {
+		return false
+	}
+	cliStorageRoutesMu.Lock()
+	defer cliStorageRoutesMu.Unlock()
+	_, ok := cliStorageRoutesByCity[filepath.Clean(cityPath)]
+	return ok
 }
 
 // cliStorageRoutesEntryFor returns the memo slot for one city, creating it under
